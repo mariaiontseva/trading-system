@@ -449,88 +449,137 @@ def get_strategy_engine():
         return None
 
 
+def calculate_live_signal(closes: list, volumes: list) -> float:
+    """Calculate trading signal from live data"""
+    import numpy as np
+
+    if len(closes) < 50:
+        return 0.0
+
+    closes = np.array(closes)
+    volumes = np.array(volumes)
+    score = 0.0
+
+    # RSI
+    deltas = np.diff(closes[-15:])
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    avg_gain = np.mean(gains) if len(gains) > 0 else 0
+    avg_loss = np.mean(losses) if len(losses) > 0 else 0.001
+    rsi = 100 - (100 / (1 + avg_gain / avg_loss))
+
+    if rsi < 30:
+        score += 0.3
+    elif rsi > 70:
+        score -= 0.3
+    elif rsi < 40:
+        score += 0.1
+    elif rsi > 60:
+        score -= 0.1
+
+    # EMA trend
+    ema_9 = np.mean(closes[-9:])
+    ema_21 = np.mean(closes[-21:])
+    ema_50 = np.mean(closes[-50:])
+
+    if ema_9 > ema_21 > ema_50:
+        score += 0.2
+    elif ema_9 < ema_21 < ema_50:
+        score -= 0.2
+
+    # Volume
+    avg_vol = np.mean(volumes[-20:])
+    if volumes[-1] > avg_vol * 1.5:
+        if score > 0:
+            score += 0.1
+        elif score < 0:
+            score -= 0.1
+
+    # Price momentum
+    momentum = (closes[-1] - closes[-10]) / closes[-10]
+    if momentum > 0.02:
+        score += 0.15
+    elif momentum < -0.02:
+        score -= 0.15
+
+    return max(-1.0, min(1.0, score))
+
+
 def auto_trading_loop():
     """Background task for automatic trading based on bot signals"""
     global _auto_trading_enabled
 
     logger.info("Auto trading loop started")
-    symbols = config.trading.symbols
+    symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT']
 
     while _auto_trading_enabled:
         try:
-            engine = get_strategy_engine()
             paper = get_paper_engine()
             loader = get_binance_loader()
 
-            if engine is None:
-                socketio.sleep(30)
-                continue
-
-            # Get signals from all bots
-            signals = engine.analyze_all('1h')
-
-            for signal in signals:
-                symbol = signal.symbol
-
-                # Update current price
+            for symbol in symbols:
+                # Get live candles from Binance
                 try:
-                    ticker = loader.client.get_symbol_ticker(symbol=symbol)
-                    price = float(ticker['price'])
+                    klines = loader.client.get_klines(symbol=symbol, interval='1h', limit=100)
+                    closes = [float(k[4]) for k in klines]
+                    volumes = [float(k[5]) for k in klines]
+                    price = closes[-1]
                     paper.update_price(symbol, price)
-                except:
+                except Exception as e:
+                    logger.error(f"Failed to get klines for {symbol}: {e}")
                     continue
+
+                # Calculate simple indicators
+                score = calculate_live_signal(closes, volumes)
 
                 # Check if we already have a position
                 has_position = symbol in paper.positions
 
+                logger.info(f"{symbol}: price={price:.2f}, score={score:.2f}, has_pos={has_position}")
+
                 # BUY signal (score > 0.15) and no position
-                if signal.score > 0.15 and not has_position:
-                    # Calculate position size (1% risk)
-                    size_usd = paper.capital * 0.02  # 2% of capital per trade
+                if score > 0.15 and not has_position:
+                    size_usd = paper.capital * 0.02
 
                     result = paper.open_position(
                         symbol=symbol,
                         side='LONG',
-                        size_usd=size_usd,
-                        stop_loss=signal.stop_loss,
-                        take_profit=signal.take_profit
+                        size_usd=size_usd
                     )
                     if result:
-                        logger.info(f"AUTO: Opened LONG {symbol} at {price}, size=${size_usd:.2f}")
+                        logger.info(f"AUTO: Opened LONG {symbol} at {price}, score={score:.2f}")
                         socketio.emit('auto_trade', {
                             'action': 'OPEN',
                             'symbol': symbol,
                             'side': 'LONG',
                             'price': price,
-                            'score': signal.score
+                            'score': score
                         })
 
                 # SELL signal (score < -0.15) and no position
-                elif signal.score < -0.15 and not has_position:
+                elif score < -0.15 and not has_position:
                     size_usd = paper.capital * 0.02
 
                     result = paper.open_position(
                         symbol=symbol,
                         side='SHORT',
-                        size_usd=size_usd,
-                        stop_loss=signal.stop_loss,
-                        take_profit=signal.take_profit
+                        size_usd=size_usd
                     )
                     if result:
-                        logger.info(f"AUTO: Opened SHORT {symbol} at {price}, size=${size_usd:.2f}")
+                        logger.info(f"AUTO: Opened SHORT {symbol} at {price}, score={score:.2f}")
                         socketio.emit('auto_trade', {
                             'action': 'OPEN',
                             'symbol': symbol,
                             'side': 'SHORT',
                             'price': price,
-                            'score': signal.score
+                            'score': score
                         })
 
                 # Close position if signal reversed
                 elif has_position:
                     position = paper.positions[symbol]
                     # Close LONG if signal turns negative
-                    if position.side == 'LONG' and signal.score < -0.1:
+                    if position.side == 'LONG' and score < -0.1:
                         result = paper.close_position(symbol, reason='SIGNAL_REVERSED')
                         if result:
                             logger.info(f"AUTO: Closed LONG {symbol}, P&L: ${result.pnl:.2f}")
@@ -540,7 +589,7 @@ def auto_trading_loop():
                                 'pnl': result.pnl
                             })
                     # Close SHORT if signal turns positive
-                    elif position.side == 'SHORT' and signal.score > 0.1:
+                    elif position.side == 'SHORT' and score > 0.1:
                         result = paper.close_position(symbol, reason='SIGNAL_REVERSED')
                         if result:
                             logger.info(f"AUTO: Closed SHORT {symbol}, P&L: ${result.pnl:.2f}")
