@@ -540,14 +540,18 @@ def auto_trading_loop():
                 # BUY signal (score > 0.15) and no position
                 if score > 0.15 and not has_position:
                     size_usd = paper.capital * 0.02
+                    stop_loss = price * 0.98  # 2% stop loss
+                    take_profit = price * 1.03  # 3% take profit
 
                     result = paper.open_position(
                         symbol=symbol,
                         side='LONG',
-                        size_usd=size_usd
+                        size_usd=size_usd,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit
                     )
                     if result:
-                        logger.info(f"AUTO: Opened LONG {symbol} at {price}, score={score:.2f}")
+                        logger.info(f"AUTO: Opened LONG {symbol} at {price}, SL={stop_loss:.2f}, TP={take_profit:.2f}")
                         socketio.emit('auto_trade', {
                             'action': 'OPEN',
                             'symbol': symbol,
@@ -559,14 +563,18 @@ def auto_trading_loop():
                 # SELL signal (score < -0.15) and no position
                 elif score < -0.15 and not has_position:
                     size_usd = paper.capital * 0.02
+                    stop_loss = price * 1.02  # 2% stop loss
+                    take_profit = price * 0.97  # 3% take profit
 
                     result = paper.open_position(
                         symbol=symbol,
                         side='SHORT',
-                        size_usd=size_usd
+                        size_usd=size_usd,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit
                     )
                     if result:
-                        logger.info(f"AUTO: Opened SHORT {symbol} at {price}, score={score:.2f}")
+                        logger.info(f"AUTO: Opened SHORT {symbol} at {price}, SL={stop_loss:.2f}, TP={take_profit:.2f}")
                         socketio.emit('auto_trade', {
                             'action': 'OPEN',
                             'symbol': symbol,
@@ -575,29 +583,46 @@ def auto_trading_loop():
                             'score': score
                         })
 
-                # Close position if signal reversed
+                # Check existing position for SL/TP/time exit
                 elif has_position:
                     position = paper.positions[symbol]
-                    # Close LONG if signal turns negative
-                    if position.side == 'LONG' and score < -0.1:
+                    pnl_pct = position.unrealized_pnl_pct if hasattr(position, 'unrealized_pnl_pct') else 0
+
+                    # Check stop loss (-2%)
+                    if pnl_pct <= -2.0:
+                        result = paper.close_position(symbol, reason='STOP_LOSS')
+                        if result:
+                            logger.info(f"AUTO: STOP LOSS {symbol}, P&L: ${result.pnl:.2f}")
+                            socketio.emit('auto_trade', {'action': 'CLOSE', 'symbol': symbol, 'pnl': result.pnl})
+
+                    # Check take profit (+3%)
+                    elif pnl_pct >= 3.0:
+                        result = paper.close_position(symbol, reason='TAKE_PROFIT')
+                        if result:
+                            logger.info(f"AUTO: TAKE PROFIT {symbol}, P&L: ${result.pnl:.2f}")
+                            socketio.emit('auto_trade', {'action': 'CLOSE', 'symbol': symbol, 'pnl': result.pnl})
+
+                    # Check time exit (4 hours)
+                    elif hasattr(position, 'entry_time'):
+                        from datetime import datetime, timedelta
+                        entry_time = position.entry_time if isinstance(position.entry_time, datetime) else datetime.fromisoformat(str(position.entry_time))
+                        if datetime.now() - entry_time > timedelta(hours=4):
+                            result = paper.close_position(symbol, reason='TIME_EXIT')
+                            if result:
+                                logger.info(f"AUTO: TIME EXIT {symbol}, P&L: ${result.pnl:.2f}")
+                                socketio.emit('auto_trade', {'action': 'CLOSE', 'symbol': symbol, 'pnl': result.pnl})
+
+                    # Signal reversal exit
+                    elif position.side == 'LONG' and score < -0.1:
                         result = paper.close_position(symbol, reason='SIGNAL_REVERSED')
                         if result:
-                            logger.info(f"AUTO: Closed LONG {symbol}, P&L: ${result.pnl:.2f}")
-                            socketio.emit('auto_trade', {
-                                'action': 'CLOSE',
-                                'symbol': symbol,
-                                'pnl': result.pnl
-                            })
-                    # Close SHORT if signal turns positive
+                            logger.info(f"AUTO: Signal reversed {symbol}, P&L: ${result.pnl:.2f}")
+                            socketio.emit('auto_trade', {'action': 'CLOSE', 'symbol': symbol, 'pnl': result.pnl})
                     elif position.side == 'SHORT' and score > 0.1:
                         result = paper.close_position(symbol, reason='SIGNAL_REVERSED')
                         if result:
-                            logger.info(f"AUTO: Closed SHORT {symbol}, P&L: ${result.pnl:.2f}")
-                            socketio.emit('auto_trade', {
-                                'action': 'CLOSE',
-                                'symbol': symbol,
-                                'pnl': result.pnl
-                            })
+                            logger.info(f"AUTO: Signal reversed {symbol}, P&L: ${result.pnl:.2f}")
+                            socketio.emit('auto_trade', {'action': 'CLOSE', 'symbol': symbol, 'pnl': result.pnl})
 
             # Wait before next check (every 30 seconds)
             socketio.sleep(30)
