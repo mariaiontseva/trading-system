@@ -537,9 +537,17 @@
                     const longCount = longConds.filter(c => c).length;
                     const shortCount = shortConds.filter(c => c).length;
 
-                    // Choose best direction
-                    const bestDir = longCount > shortCount ? 'long' : (shortCount > longCount ? 'short' : 'none');
-                    const bestConds = bestDir === 'long' ? longConds : (bestDir === 'short' ? shortConds : [false, false, false]);
+                    // Choose best direction (if tie, pick based on RSI proximity)
+                    let bestDir = 'none';
+                    if (longCount > shortCount) {
+                        bestDir = 'long';
+                    } else if (shortCount > longCount) {
+                        bestDir = 'short';
+                    } else if (longCount > 0) {
+                        // Tie - pick based on which RSI is closer to threshold
+                        bestDir = (40 - rsi) < (rsi - 60) ? 'long' : 'short';
+                    }
+                    const bestConds = bestDir === 'long' ? longConds : shortConds;
                     const bestCount = Math.max(longCount, shortCount);
 
                     if (badgeEl) {
