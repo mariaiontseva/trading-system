@@ -1,1 +1,1 @@
-web: cd dashboard && python app.py
+web: python dashboard/app.py

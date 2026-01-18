@@ -26,4 +26,4 @@ ENV PYTHONPATH=/app
 EXPOSE 5000
 
 # Default command
-CMD ["python", "main.py", "dashboard"]
+CMD ["python", "dashboard/app.py"]
