@@ -1,0 +1,10 @@
+.env
+*.db
+*.db-journal
+__pycache__/
+*.pyc
+venv/
+*.log
+backtest_results/
+.DS_Store
+*.parquet
