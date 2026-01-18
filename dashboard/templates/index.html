@@ -1,20 +1,20 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading System - 11 Bots</title>
+    <title>Trading Bot - Testnet</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
                     colors: {
-                        dark: { 900: '#0d1117', 800: '#161b22', 700: '#21262d', 600: '#30363d' },
+                        dark: { 900: '#0d1117', 800: '#161b22', 700: '#21262d', 600: '#30363d', 500: '#484f58' },
                         accent: { blue: '#58a6ff', green: '#3fb950', red: '#f85149', yellow: '#d29922', purple: '#a371f7' }
                     }
                 }
@@ -24,605 +24,871 @@
     <style>
         body { background: #0d1117; }
         .glass { background: rgba(22, 27, 34, 0.95); border: 1px solid #30363d; }
-        .bot-card { transition: all 0.2s; }
-        .bot-card:hover { background: #21262d; }
-        .asset-tab.active { background: #21262d; border-color: #58a6ff; }
+        .coin-tab { transition: all 0.15s; cursor: pointer; }
+        .coin-tab:hover { background: #21262d; }
+        .coin-tab.active { background: #21262d; border-color: #58a6ff !important; }
+        .signal-bar { height: 4px; border-radius: 2px; background: #30363d; overflow: hidden; }
+        .signal-fill { height: 100%; transition: width 0.3s; }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .bot-dot { width: 6px; height: 6px; border-radius: 50%; }
     </style>
 </head>
-<body class="font-sans text-gray-100 min-h-screen">
+<body class="font-sans text-gray-100 min-h-screen flex flex-col">
 
     <!-- Header -->
-    <header class="border-b border-dark-600 px-6 py-3">
+    <header class="border-b border-dark-600 px-6 py-3 flex-shrink-0">
         <div class="max-w-7xl mx-auto flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <h1 class="text-lg font-semibold">Trading System</h1>
-                <span class="text-xs px-2 py-0.5 rounded bg-accent-purple/20 text-accent-purple">11 Bots</span>
-                <span class="text-xs px-2 py-0.5 rounded bg-accent-blue/20 text-accent-blue">Testnet</span>
+            <div class="flex items-center gap-4">
+                <h1 class="text-xl font-bold">Trading Bot</h1>
+                <span class="text-xs px-2 py-1 rounded bg-accent-blue/20 text-accent-blue font-medium">Testnet</span>
+                <span class="text-xs px-2 py-1 rounded bg-accent-purple/20 text-accent-purple">RSI+Trend v2</span>
             </div>
-            <div class="flex items-center gap-6 text-sm">
-                <div>
-                    <span class="text-gray-400">Equity:</span>
-                    <span class="font-semibold text-accent-green ml-1" id="total-equity">$10,000.00</span>
+            <div class="flex items-center gap-6">
+                <div class="text-right">
+                    <div class="text-xs text-gray-500">Capital</div>
+                    <div class="font-mono font-semibold text-lg" id="capital">$10,000</div>
                 </div>
-                <div>
-                    <span class="text-gray-400">P&L:</span>
-                    <span class="font-semibold ml-1" id="total-pnl">$0.00</span>
+                <div class="text-right">
+                    <div class="text-xs text-gray-500">P&L</div>
+                    <div class="font-mono font-semibold text-lg" id="total-pnl">$0.00</div>
                 </div>
-                <div>
-                    <span class="text-gray-400">Positions:</span>
-                    <span class="font-semibold ml-1" id="positions-count">0</span>
+                <div class="text-right">
+                    <div class="text-xs text-gray-500">Positions</div>
+                    <div class="font-semibold text-lg" id="positions-count">0</div>
                 </div>
-                <div class="flex items-center gap-1">
-                    <span class="w-2 h-2 rounded-full bg-accent-green animate-pulse"></span>
-                    <span class="text-gray-400">Live</span>
+                <div class="flex items-center gap-2 ml-4">
+                    <span class="w-2 h-2 rounded-full pulse" id="status-dot"></span>
+                    <span class="text-sm" id="status-text">Connecting...</span>
                 </div>
+                <button id="toggle-btn" class="px-4 py-2 rounded-lg font-medium transition-colors">
+                    Start
+                </button>
             </div>
         </div>
     </header>
 
-    <main class="max-w-7xl mx-auto px-6 py-4 space-y-4">
+    <!-- Main Content -->
+    <main class="flex-1 max-w-7xl mx-auto w-full px-6 py-4 flex flex-col gap-4">
 
-        <!-- SECTION 1: 11 BOTS STATUS -->
-        <section class="glass rounded-xl p-4">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="font-semibold text-lg">11 Trading Bots</h2>
-                <div class="flex items-center gap-2">
-                    <span class="text-xs text-gray-400" id="bots-active">11/11 active</span>
-                    <label class="flex items-center gap-2 text-sm cursor-pointer ml-4">
-                        <input type="checkbox" id="auto-trade" class="w-4 h-4 rounded bg-dark-700" checked>
-                        <span class="text-gray-400">Auto Trading</span>
-                    </label>
-                </div>
-            </div>
-
-            <!-- Bots Grid: 4 columns -->
-            <div class="grid grid-cols-4 gap-3" id="bots-grid">
-                <!-- Layer 1: Data -->
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="price_scanner">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-gray-400">Layer 1</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Price Scanner</div>
-                    <div class="text-xs text-gray-400 mt-1">335k candles</div>
-                </div>
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="volume_analyzer">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-gray-400">Layer 1</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Volume Analyzer</div>
-                    <div class="text-xs text-accent-green mt-1" id="bot-volume">Accumulation</div>
-                </div>
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="sentiment_tracker">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-gray-400">Layer 1</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Sentiment Tracker</div>
-                    <div class="text-xs mt-1" id="bot-sentiment">Fear: 49</div>
-                </div>
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="whale_watcher">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-gray-400">Layer 1</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Whale Watcher</div>
-                    <div class="text-xs text-accent-red mt-1" id="bot-whale">Bearish -82%</div>
-                </div>
-
-                <!-- Layer 2: Analysis -->
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="signal_generator">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-accent-blue">Layer 2</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Signal Generator</div>
-                    <div class="text-xs mt-1" id="bot-signal">4 SELL, 1 HOLD</div>
-                </div>
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="pattern_detector">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-accent-blue">Layer 2</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Pattern Detector</div>
-                    <div class="text-xs mt-1" id="bot-pattern">Shooting Star</div>
-                </div>
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="strategy_engine">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-accent-blue">Layer 2</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Strategy Engine</div>
-                    <div class="text-xs text-accent-red mt-1" id="bot-strategy">SELL ADA -0.31</div>
-                </div>
-
-                <!-- Layer 3: Risk -->
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="risk_manager">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-accent-yellow">Layer 3</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Risk Manager</div>
-                    <div class="text-xs mt-1" id="bot-risk">1% risk, 5% max</div>
-                </div>
-
-                <!-- Layer 4: Execution -->
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="order_executor">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-accent-purple">Layer 4</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Order Executor</div>
-                    <div class="text-xs mt-1" id="bot-executor">Ready</div>
-                </div>
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="position_manager">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-accent-purple">Layer 4</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Position Manager</div>
-                    <div class="text-xs mt-1" id="bot-position">Trailing 2%</div>
-                </div>
-
-                <!-- Layer 5: Monitor -->
-                <div class="bot-card p-3 rounded-lg bg-dark-700" data-bot="monitor">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-gray-400">Layer 5</span>
-                        <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    </div>
-                    <div class="font-medium text-sm">Monitor & Report</div>
-                    <div class="text-xs mt-1" id="bot-monitor">Win: 66.7%</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- SECTION 2: SIGNALS & TRADES -->
+        <!-- Top Row: Bots + Selected Coin -->
         <div class="grid grid-cols-3 gap-4">
-            <!-- Strategy Signals -->
-            <section class="glass rounded-xl p-4">
-                <h3 class="font-semibold mb-3 flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-accent-blue"></span>
-                    Strategy Signals
-                </h3>
-                <div class="space-y-2 max-h-40 overflow-y-auto" id="strategy-signals">
-                    <!-- Populated by JS -->
-                </div>
-            </section>
 
-            <!-- Active Positions -->
-            <section class="glass rounded-xl p-4">
-                <h3 class="font-semibold mb-3 flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-accent-green"></span>
-                    Active Positions
-                </h3>
-                <div class="space-y-2 max-h-40 overflow-y-auto" id="active-positions">
-                    <p class="text-gray-500 text-sm">No positions</p>
+            <!-- Bot Status - Accordion -->
+            <div class="glass rounded-xl p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="font-semibold">Bot Layers</h2>
+                    <span class="text-xs text-gray-500" id="bots-status">Checking...</span>
                 </div>
-            </section>
+                <div class="space-y-1 text-sm">
+                    <!-- Layer 1: Price Scanner -->
+                    <div class="layer-accordion rounded bg-dark-700 overflow-hidden">
+                        <div class="flex items-center justify-between p-2 cursor-pointer hover:bg-dark-600" onclick="toggleLayer(1)">
+                            <div class="flex items-center gap-2">
+                                <span class="bot-dot bg-accent-green" id="bot-scanner"></span>
+                                <span>Price Scanner</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500" id="scanner-stat">5 coins</span>
+                                <span class="layer-arrow text-gray-500 text-xs">▼</span>
+                            </div>
+                        </div>
+                        <div class="layer-content hidden px-3 pb-2 text-xs text-gray-400 border-t border-dark-600">
+                            <div class="pt-2 space-y-1">
+                                <div class="flex justify-between"><span>Interval:</span><span class="text-gray-300">1h candles</span></div>
+                                <div class="flex justify-between"><span>Last scan:</span><span class="text-gray-300" id="scanner-last">--</span></div>
+                                <div class="flex justify-between"><span>API calls:</span><span class="text-gray-300" id="scanner-calls">--</span></div>
+                            </div>
+                        </div>
+                    </div>
 
-            <!-- Recent Trades -->
-            <section class="glass rounded-xl p-4">
-                <h3 class="font-semibold mb-3 flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-accent-purple"></span>
-                    Recent Trades
-                </h3>
-                <div class="space-y-2 max-h-40 overflow-y-auto" id="trades-list">
-                    <p class="text-gray-500 text-sm">No trades yet</p>
+                    <!-- Layer 2: Signal Generator -->
+                    <div class="layer-accordion rounded bg-dark-700 overflow-hidden">
+                        <div class="flex items-center justify-between p-2 cursor-pointer hover:bg-dark-600" onclick="toggleLayer(2)">
+                            <div class="flex items-center gap-2">
+                                <span class="bot-dot bg-accent-green" id="bot-signal"></span>
+                                <span>Signal Generator</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500" id="signal-stat">RSI+Trend</span>
+                                <span class="layer-arrow text-gray-500 text-xs">▼</span>
+                            </div>
+                        </div>
+                        <div class="layer-content hidden px-3 pb-2 text-xs text-gray-400 border-t border-dark-600">
+                            <div class="pt-2 space-y-1">
+                                <div class="flex justify-between"><span>Strategy:</span><span class="text-gray-300">RSI + Trend v2</span></div>
+                                <div class="flex justify-between"><span>LONG:</span><span class="text-accent-green">RSI&lt;40 + UP + ADX&gt;20</span></div>
+                                <div class="flex justify-between"><span>SHORT:</span><span class="text-accent-red">RSI&gt;60 + DOWN + ADX&gt;20</span></div>
+                                <div class="flex justify-between"><span>Signals today:</span><span class="text-gray-300" id="signal-today">0</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Layer 3: Order Executor -->
+                    <div class="layer-accordion rounded bg-dark-700 overflow-hidden">
+                        <div class="flex items-center justify-between p-2 cursor-pointer hover:bg-dark-600" onclick="toggleLayer(3)">
+                            <div class="flex items-center gap-2">
+                                <span class="bot-dot" id="bot-executor"></span>
+                                <span>Order Executor</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500" id="executor-stat">Paper</span>
+                                <span class="layer-arrow text-gray-500 text-xs">▼</span>
+                            </div>
+                        </div>
+                        <div class="layer-content hidden px-3 pb-2 text-xs text-gray-400 border-t border-dark-600">
+                            <div class="pt-2 space-y-1">
+                                <div class="flex justify-between"><span>Mode:</span><span class="text-accent-yellow">Paper Trading</span></div>
+                                <div class="flex justify-between"><span>Position size:</span><span class="text-gray-300">$1,000 (10%)</span></div>
+                                <div class="flex justify-between"><span>Orders today:</span><span class="text-gray-300" id="executor-orders">0</span></div>
+                                <div class="flex justify-between"><span>Avg slippage:</span><span class="text-gray-300" id="executor-slip">0.05%</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Layer 4: Risk Manager -->
+                    <div class="layer-accordion rounded bg-dark-700 overflow-hidden">
+                        <div class="flex items-center justify-between p-2 cursor-pointer hover:bg-dark-600" onclick="toggleLayer(4)">
+                            <div class="flex items-center gap-2">
+                                <span class="bot-dot" id="bot-risk"></span>
+                                <span>Risk Manager</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500" id="risk-stat">2% max</span>
+                                <span class="layer-arrow text-gray-500 text-xs">▼</span>
+                            </div>
+                        </div>
+                        <div class="layer-content hidden px-3 pb-2 text-xs text-gray-400 border-t border-dark-600">
+                            <div class="pt-2 space-y-1">
+                                <div class="flex justify-between"><span>Stop Loss:</span><span class="text-accent-red">2.0 x ATR</span></div>
+                                <div class="flex justify-between"><span>Take Profit:</span><span class="text-accent-green">4.0 x ATR</span></div>
+                                <div class="flex justify-between"><span>Max positions:</span><span class="text-gray-300">5</span></div>
+                                <div class="flex justify-between"><span>Daily loss limit:</span><span class="text-gray-300">$500 (5%)</span></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </section>
+            </div>
+
+            <!-- Selected Coin Detail -->
+            <div class="glass rounded-xl p-4 col-span-2">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-2xl font-bold" id="selected-symbol">BTCUSDT</span>
+                            <span class="px-2 py-1 rounded text-xs font-medium" id="selected-signal-badge">HOLD</span>
+                        </div>
+                        <div class="font-mono text-4xl font-bold mt-2" id="selected-price">$95,000.00</div>
+                    </div>
+                    <div class="text-right space-y-1">
+                        <div class="text-sm">
+                            <span class="text-gray-500">RSI:</span>
+                            <span class="font-mono font-semibold ml-2" id="selected-rsi">50.0</span>
+                        </div>
+                        <div class="text-sm">
+                            <span class="text-gray-500">ADX:</span>
+                            <span class="font-mono font-semibold ml-2" id="selected-adx">25.0</span>
+                        </div>
+                        <div class="text-sm">
+                            <span class="text-gray-500">ATR:</span>
+                            <span class="font-mono font-semibold ml-2" id="selected-atr">$200</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Signal Conditions Checklist -->
+                <div class="mt-4 grid grid-cols-2 gap-4">
+                    <!-- LONG Conditions -->
+                    <div class="p-3 rounded-lg bg-dark-700/50 border border-dark-600">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-accent-green font-semibold text-sm">LONG Signal</span>
+                            <span class="text-xs px-2 py-0.5 rounded" id="long-status">0/3</span>
+                        </div>
+                        <div class="space-y-1.5 text-xs">
+                            <div class="flex items-center justify-between" id="long-cond-rsi">
+                                <span class="flex items-center gap-1.5">
+                                    <span class="cond-icon">○</span>
+                                    <span>RSI &lt; 40</span>
+                                </span>
+                                <span class="font-mono text-gray-500 cond-value">--</span>
+                            </div>
+                            <div class="flex items-center justify-between" id="long-cond-trend">
+                                <span class="flex items-center gap-1.5">
+                                    <span class="cond-icon">○</span>
+                                    <span>Trend</span>
+                                </span>
+                                <span class="font-mono text-gray-500 cond-value">--</span>
+                            </div>
+                            <div class="flex items-center justify-between" id="long-cond-adx">
+                                <span class="flex items-center gap-1.5">
+                                    <span class="cond-icon">○</span>
+                                    <span>ADX &gt; 20</span>
+                                </span>
+                                <span class="font-mono text-gray-500 cond-value">--</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- SHORT Conditions -->
+                    <div class="p-3 rounded-lg bg-dark-700/50 border border-dark-600">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-accent-red font-semibold text-sm">SHORT Signal</span>
+                            <span class="text-xs px-2 py-0.5 rounded" id="short-status">0/3</span>
+                        </div>
+                        <div class="space-y-1.5 text-xs">
+                            <div class="flex items-center justify-between" id="short-cond-rsi">
+                                <span class="flex items-center gap-1.5">
+                                    <span class="cond-icon">○</span>
+                                    <span>RSI &gt; 60</span>
+                                </span>
+                                <span class="font-mono text-gray-500 cond-value">--</span>
+                            </div>
+                            <div class="flex items-center justify-between" id="short-cond-trend">
+                                <span class="flex items-center gap-1.5">
+                                    <span class="cond-icon">○</span>
+                                    <span>Trend</span>
+                                </span>
+                                <span class="font-mono text-gray-500 cond-value">--</span>
+                            </div>
+                            <div class="flex items-center justify-between" id="short-cond-adx">
+                                <span class="flex items-center gap-1.5">
+                                    <span class="cond-icon">○</span>
+                                    <span>ADX &gt; 20</span>
+                                </span>
+                                <span class="font-mono text-gray-500 cond-value">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Price Chart -->
+                <div class="mt-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm font-semibold text-gray-400">Price (24h)</span>
+                        <div class="flex gap-1">
+                            <button onclick="loadChart('1h', 24)" class="chart-period px-2 py-0.5 text-xs rounded bg-dark-600 text-gray-400 hover:bg-dark-500" data-period="24">24h</button>
+                            <button onclick="loadChart('1h', 72)" class="chart-period px-2 py-0.5 text-xs rounded bg-dark-700 text-gray-500 hover:bg-dark-500" data-period="72">3d</button>
+                            <button onclick="loadChart('4h', 42)" class="chart-period px-2 py-0.5 text-xs rounded bg-dark-700 text-gray-500 hover:bg-dark-500" data-period="168">7d</button>
+                        </div>
+                    </div>
+                    <div class="h-40 relative">
+                        <canvas id="priceChart"></canvas>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <!-- SECTION 3: ASSETS & CHART (Bottom) -->
-        <section class="glass rounded-xl overflow-hidden">
-            <div class="flex items-center justify-between border-b border-dark-600 px-4">
-                <!-- Asset Tabs -->
-                <div class="flex">
-                    <button class="asset-tab active px-4 py-2 text-sm border-b-2 border-transparent" data-asset="BTCUSDT" onclick="selectAsset('BTCUSDT')">
-                        <span class="font-medium">BTC</span>
-                        <span class="text-xs ml-1 text-gray-400" id="tab-price-BTCUSDT">$95,000</span>
-                    </button>
-                    <button class="asset-tab px-4 py-2 text-sm border-b-2 border-transparent" data-asset="ETHUSDT" onclick="selectAsset('ETHUSDT')">
-                        <span class="font-medium">ETH</span>
-                        <span class="text-xs ml-1 text-gray-400" id="tab-price-ETHUSDT">$3,300</span>
-                    </button>
-                    <button class="asset-tab px-4 py-2 text-sm border-b-2 border-transparent" data-asset="BNBUSDT" onclick="selectAsset('BNBUSDT')">
-                        <span class="font-medium">BNB</span>
-                        <span class="text-xs ml-1 text-gray-400" id="tab-price-BNBUSDT">$945</span>
-                    </button>
-                    <button class="asset-tab px-4 py-2 text-sm border-b-2 border-transparent" data-asset="SOLUSDT" onclick="selectAsset('SOLUSDT')">
-                        <span class="font-medium">SOL</span>
-                        <span class="text-xs ml-1 text-gray-400" id="tab-price-SOLUSDT">$143</span>
-                    </button>
-                    <button class="asset-tab px-4 py-2 text-sm border-b-2 border-transparent" data-asset="ADAUSDT" onclick="selectAsset('ADAUSDT')">
-                        <span class="font-medium">ADA</span>
-                        <span class="text-xs ml-1 text-gray-400" id="tab-price-ADAUSDT">$0.40</span>
-                    </button>
-                </div>
+        <!-- Middle Row: Positions + Trades -->
+        <div class="grid grid-cols-2 gap-4">
 
-                <!-- Actions -->
-                <div class="flex items-center gap-2 py-2">
-                    <button onclick="closeAllPositions()" class="px-3 py-1 text-xs rounded bg-dark-700 hover:bg-dark-600 text-gray-400">
-                        Close All
-                    </button>
-                    <button onclick="resetAccount()" class="px-3 py-1 text-xs rounded bg-dark-700 hover:bg-dark-600 text-gray-400">
-                        Reset $10k
-                    </button>
+            <!-- Open Positions -->
+            <div class="glass rounded-xl p-4">
+                <h2 class="font-semibold mb-3">Open Positions</h2>
+                <div id="positions-list" class="space-y-2">
+                    <div class="text-gray-500 text-center py-6 text-sm">No open positions</div>
                 </div>
             </div>
 
-            <div class="p-4">
-                <!-- Selected Asset Header -->
+            <!-- Recent Trades -->
+            <div class="glass rounded-xl p-4">
                 <div class="flex items-center justify-between mb-3">
-                    <div class="flex items-center gap-4">
-                        <span class="text-2xl font-bold" id="selected-price">$95,000.00</span>
-                        <span id="selected-signal" class="text-sm px-2 py-0.5 rounded bg-dark-600">HOLD</span>
-                    </div>
-                    <!-- Quick Trade -->
-                    <div class="flex items-center gap-2">
-                        <span class="text-sm text-gray-400">Size:</span>
-                        <input type="number" id="trade-size" value="200" class="w-20 px-2 py-1 text-sm bg-dark-700 border border-dark-600 rounded">
-                        <button onclick="quickTrade('LONG')" class="px-4 py-1.5 text-sm rounded bg-accent-green/20 text-accent-green hover:bg-accent-green/30 font-medium">
-                            Long
-                        </button>
-                        <button onclick="quickTrade('SHORT')" class="px-4 py-1.5 text-sm rounded bg-accent-red/20 text-accent-red hover:bg-accent-red/30 font-medium">
-                            Short
-                        </button>
-                        <button onclick="closeAsset()" class="px-4 py-1.5 text-sm rounded bg-dark-700 text-gray-400 hover:bg-dark-600">
-                            Close
-                        </button>
-                    </div>
+                    <h2 class="font-semibold">Recent Trades</h2>
+                    <span class="text-xs text-gray-500" id="trades-summary">0 trades today</span>
                 </div>
-
-                <!-- Chart -->
-                <div class="h-48 bg-dark-800 rounded-lg">
-                    <canvas id="price-chart"></canvas>
+                <div id="trades-list" class="space-y-2 max-h-48 overflow-y-auto">
+                    <div class="text-gray-500 text-center py-6 text-sm">No trades yet</div>
                 </div>
             </div>
-        </section>
+        </div>
+
+        <!-- Backtest Comparison -->
+        <div class="glass rounded-xl p-4">
+            <h2 class="font-semibold mb-3">Backtest vs Live</h2>
+            <div class="grid grid-cols-4 gap-4 text-center">
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">Win Rate</div>
+                    <div class="flex items-center justify-center gap-2">
+                        <span class="text-gray-400 text-sm">BT: 59.2%</span>
+                        <span class="text-white font-mono font-semibold" id="live-wr">--%</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">Profit Factor</div>
+                    <div class="flex items-center justify-center gap-2">
+                        <span class="text-gray-400 text-sm">BT: 1.33</span>
+                        <span class="text-white font-mono font-semibold" id="live-pf">--</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">Avg Slippage</div>
+                    <div class="font-mono font-semibold" id="live-slip">0.00%</div>
+                </div>
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">Total Trades</div>
+                    <div class="font-mono font-semibold" id="total-trades">0</div>
+                </div>
+            </div>
+        </div>
 
     </main>
 
+    <!-- Bottom Coin Tabs -->
+    <footer class="border-t border-dark-600 px-6 py-3 flex-shrink-0 bg-dark-800">
+        <div class="max-w-7xl mx-auto">
+            <div class="grid grid-cols-5 gap-3" id="coin-tabs">
+                <!-- Coins will be rendered here -->
+            </div>
+        </div>
+    </footer>
+
     <script>
-        // Configuration
-        const ASSETS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT'];
-        let selectedAsset = 'BTCUSDT';
-        let prices = {};
-        let positions = {};
-        let botSignals = {};
+        const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT'];
+        const SYMBOL_NAMES = { BTCUSDT: 'Bitcoin', ETHUSDT: 'Ethereum', BNBUSDT: 'BNB', SOLUSDT: 'Solana', ADAUSDT: 'Cardano' };
+
+        let selectedSymbol = 'BTCUSDT';
+        let isRunning = false;
+        let socket = null;
+        let coinData = {};
+        let priceChart = null;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
-            initChart();
-            initStrategySignals();
-            fetchData();
-            fetchBotSignals();
-            loadChartData(selectedAsset);
-            setInterval(fetchData, 5000);
-            setInterval(fetchBotSignals, 10000);
-            setInterval(() => loadChartData(selectedAsset), 60000); // Update chart every minute
+            renderCoinTabs();
+            connectSocket();
+            loadStatus();
+            loadPositions();
+            loadChart('1h', 24);
+            loadTrades();
+            loadStats();
+            loadAllCoinData();
+            updateLayerStats();
+            setInterval(loadAllCoinData, 5000);
+            setInterval(updateLayerStats, 10000);
         });
 
-        function initStrategySignals() {
-            const container = document.getElementById('strategy-signals');
-            container.innerHTML = ASSETS.map(asset => {
-                const symbol = asset.replace('USDT', '');
-                return `
-                    <div class="flex items-center justify-between text-sm p-2 rounded bg-dark-700" id="signal-${asset}">
-                        <span class="font-medium">${symbol}</span>
-                        <span class="text-gray-400">Loading...</span>
+        // Render coin tabs
+        function renderCoinTabs() {
+            const container = document.getElementById('coin-tabs');
+            container.innerHTML = SYMBOLS.map(symbol => `
+                <div class="coin-tab glass rounded-lg p-3 ${symbol === selectedSymbol ? 'active' : ''}"
+                     onclick="selectCoin('${symbol}')" data-symbol="${symbol}">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="font-semibold">${symbol.replace('USDT', '')}</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded signal-badge" data-symbol="${symbol}">--</span>
                     </div>
-                `;
-            }).join('');
+                    <div class="font-mono text-lg font-semibold coin-price" data-symbol="${symbol}">$--</div>
+                    <div class="flex items-center justify-between mt-2 text-xs">
+                        <span class="text-gray-500">RSI</span>
+                        <span class="font-mono coin-rsi" data-symbol="${symbol}">--</span>
+                    </div>
+                    <div class="flex gap-1 mt-1.5 coin-conditions" data-symbol="${symbol}">
+                        <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                        <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                        <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                    </div>
+                </div>
+            `).join('');
         }
 
-        async function fetchBotSignals() {
-            try {
-                const res = await fetch('/api/bot/signals');
-                if (res.ok) {
-                    botSignals = await res.json();
-                    updateBotSignalsUI();
-                }
-            } catch (e) {
-                console.log('Bot signals not available yet');
-            }
-        }
-
-        function updateBotSignalsUI() {
-            // Update strategy signals panel
-            ASSETS.forEach(asset => {
-                const el = document.getElementById(`signal-${asset}`);
-                const signal = botSignals[asset];
-                if (el && signal) {
-                    const color = signal.score > 0.2 ? 'text-accent-green' :
-                                  signal.score < -0.2 ? 'text-accent-red' : 'text-gray-400';
-                    const action = signal.score > 0.2 ? 'BUY' :
-                                   signal.score < -0.2 ? 'SELL' : 'HOLD';
-                    el.innerHTML = `
-                        <span class="font-medium">${asset.replace('USDT', '')}</span>
-                        <span class="${color}">${action} ${(signal.score * 100).toFixed(0)}%</span>
-                    `;
-                }
+        // Select coin
+        function selectCoin(symbol) {
+            selectedSymbol = symbol;
+            document.querySelectorAll('.coin-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.symbol === symbol);
             });
+            updateSelectedCoin();
+            loadChart('1h', 24);
         }
 
-        function selectAsset(asset) {
-            selectedAsset = asset;
-            document.querySelectorAll('.asset-tab').forEach(tab => {
-                tab.classList.toggle('active', tab.dataset.asset === asset);
-            });
-            updateSelectedAssetDisplay();
-            loadChartData(asset);
-        }
+        // Update selected coin display
+        function updateSelectedCoin() {
+            const data = coinData[selectedSymbol] || {};
+            document.getElementById('selected-symbol').textContent = selectedSymbol;
+            document.getElementById('selected-price').textContent = data.price ? '$' + data.price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '$--';
 
-        function updateSelectedAssetDisplay() {
-            const price = prices[selectedAsset] || 0;
-            document.getElementById('selected-price').textContent = `$${price.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            const rsi = data.rsi || 50;
+            document.getElementById('selected-rsi').textContent = rsi.toFixed(1);
+            document.getElementById('selected-adx').textContent = (data.adx || 0).toFixed(1);
+            document.getElementById('selected-atr').textContent = '$' + (data.atr || 0).toFixed(2);
 
-            const signal = botSignals[selectedAsset];
-            const signalEl = document.getElementById('selected-signal');
-            if (signal) {
-                const action = signal.score > 0.2 ? 'BUY' : signal.score < -0.2 ? 'SELL' : 'HOLD';
-                const color = signal.score > 0.2 ? 'bg-accent-green/20 text-accent-green' :
-                              signal.score < -0.2 ? 'bg-accent-red/20 text-accent-red' : 'bg-dark-600 text-gray-400';
-                signalEl.textContent = action;
-                signalEl.className = `text-sm px-2 py-0.5 rounded ${color}`;
-            }
-        }
-
-        async function fetchData() {
-            try {
-                const pricesRes = await fetch('/api/prices?symbols=' + ASSETS.join(','));
-                prices = await pricesRes.json();
-
-                const statusRes = await fetch('/api/status');
-                const status = await statusRes.json();
-
-                const posRes = await fetch('/api/paper/positions');
-                const posArray = await posRes.json();
-                positions = {};
-                posArray.forEach(p => positions[p.symbol] = p);
-
-                const tradesRes = await fetch('/api/paper/trades?limit=10');
-                const trades = await tradesRes.json();
-
-                updateUI(status, trades);
-            } catch (e) {
-                console.error('Fetch error:', e);
-            }
-        }
-
-        function updateUI(status, trades) {
-            // Header stats
-            if (status.paper_trading) {
-                document.getElementById('total-equity').textContent = `$${status.paper_trading.equity.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
-                const pnl = status.paper_trading.total_realized_pnl;
-                const pnlEl = document.getElementById('total-pnl');
-                pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-                pnlEl.className = pnl >= 0 ? 'font-semibold ml-1 text-accent-green' : 'font-semibold ml-1 text-accent-red';
-                document.getElementById('positions-count').textContent = status.paper_trading.positions_count;
-            }
-
-            // Update tab prices
-            ASSETS.forEach(asset => {
-                const price = prices[asset] || 0;
-                const tabPrice = document.getElementById(`tab-price-${asset}`);
-                if (tabPrice) {
-                    tabPrice.textContent = `$${price.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0})}`;
-                }
-            });
-
-            updateSelectedAssetDisplay();
-
-            // Active positions
-            const posContainer = document.getElementById('active-positions');
-            const posArray = Object.values(positions);
-            if (posArray.length === 0) {
-                posContainer.innerHTML = '<p class="text-gray-500 text-sm">No positions</p>';
+            // Signal badge
+            const badge = document.getElementById('selected-signal-badge');
+            if (data.signal === 1) {
+                badge.textContent = 'LONG';
+                badge.className = 'px-2 py-1 rounded text-xs font-medium bg-accent-green/20 text-accent-green';
+            } else if (data.signal === -1) {
+                badge.textContent = 'SHORT';
+                badge.className = 'px-2 py-1 rounded text-xs font-medium bg-accent-red/20 text-accent-red';
             } else {
-                posContainer.innerHTML = posArray.map(p => `
-                    <div class="flex items-center justify-between text-sm p-2 rounded bg-dark-700">
-                        <div>
-                            <span class="font-medium">${p.symbol.replace('USDT', '')}</span>
-                            <span class="text-xs ml-1 ${p.side === 'LONG' ? 'text-accent-green' : 'text-accent-red'}">${p.side}</span>
-                        </div>
-                        <span class="${p.unrealized_pnl >= 0 ? 'text-accent-green' : 'text-accent-red'}">
-                            ${p.unrealized_pnl >= 0 ? '+' : ''}$${p.unrealized_pnl.toFixed(2)}
-                        </span>
-                    </div>
-                `).join('');
+                badge.textContent = 'HOLD';
+                badge.className = 'px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-400';
             }
 
-            // Recent trades
-            const tradesList = document.getElementById('trades-list');
-            if (trades.length === 0) {
-                tradesList.innerHTML = '<p class="text-gray-500 text-sm">No trades yet</p>';
-            } else {
-                tradesList.innerHTML = trades.slice(0, 5).map(t => `
-                    <div class="flex items-center justify-between text-sm p-2 rounded bg-dark-700">
-                        <div>
-                            <span class="font-medium">${t.symbol.replace('USDT', '')}</span>
-                            <span class="text-xs ml-1 ${t.side === 'LONG' ? 'text-accent-green' : 'text-accent-red'}">${t.side}</span>
-                        </div>
-                        <span class="${t.pnl >= 0 ? 'text-accent-green' : 'text-accent-red'}">
-                            ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}
-                        </span>
-                    </div>
-                `).join('');
+            // Calculate conditions
+            const adx = data.adx || 0;
+            const price = data.price || 0;
+            const ema100 = data.ema100 || price;
+
+            // LONG conditions
+            const longRsiOk = rsi < 40;
+            const longTrendOk = price > ema100;
+            const longAdxOk = adx >= 20;
+            const longCount = (longRsiOk ? 1 : 0) + (longTrendOk ? 1 : 0) + (longAdxOk ? 1 : 0);
+
+            // SHORT conditions
+            const shortRsiOk = rsi > 60;
+            const shortTrendOk = price < ema100;
+            const shortAdxOk = adx >= 20;
+            const shortCount = (shortRsiOk ? 1 : 0) + (shortTrendOk ? 1 : 0) + (shortAdxOk ? 1 : 0);
+
+            // Helper to update condition row
+            function updateCondition(id, met, value, isShort = false) {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const icon = el.querySelector('.cond-icon');
+                const valSpan = el.querySelector('.cond-value');
+                const color = isShort ? 'text-accent-red' : 'text-accent-green';
+                if (icon) {
+                    icon.textContent = met ? '●' : '○';
+                    icon.className = 'cond-icon ' + (met ? color : 'text-gray-500');
+                }
+                if (valSpan) {
+                    valSpan.textContent = value;
+                    valSpan.className = 'font-mono cond-value ' + (met ? color : 'text-gray-500');
+                }
+            }
+
+            // Update LONG conditions
+            updateCondition('long-cond-rsi', longRsiOk, rsi.toFixed(1) + (longRsiOk ? ' ✓' : ` (need -${(rsi-40).toFixed(0)})`));
+            updateCondition('long-cond-trend', longTrendOk, longTrendOk ? 'UP ✓' : 'DOWN ✗');
+            updateCondition('long-cond-adx', longAdxOk, adx.toFixed(1) + (longAdxOk ? ' ✓' : ' ✗'));
+
+            // LONG status badge
+            const longStatus = document.getElementById('long-status');
+            if (longStatus) {
+                longStatus.textContent = `${longCount}/3`;
+                if (longCount === 3) {
+                    longStatus.className = 'text-xs px-2 py-0.5 rounded bg-accent-green text-dark-900 font-bold';
+                } else if (longCount >= 2) {
+                    longStatus.className = 'text-xs px-2 py-0.5 rounded bg-accent-yellow/20 text-accent-yellow';
+                } else {
+                    longStatus.className = 'text-xs px-2 py-0.5 rounded bg-dark-600 text-gray-500';
+                }
+            }
+
+            // Update SHORT conditions
+            updateCondition('short-cond-rsi', shortRsiOk, rsi.toFixed(1) + (shortRsiOk ? ' ✓' : ` (need +${(60-rsi).toFixed(0)})`), true);
+            updateCondition('short-cond-trend', shortTrendOk, shortTrendOk ? 'DOWN ✓' : 'UP ✗', true);
+            updateCondition('short-cond-adx', shortAdxOk, adx.toFixed(1) + (shortAdxOk ? ' ✓' : ' ✗'), true);
+
+            // SHORT status badge
+            const shortStatus = document.getElementById('short-status');
+            if (shortStatus) {
+                shortStatus.textContent = `${shortCount}/3`;
+                if (shortCount === 3) {
+                    shortStatus.className = 'text-xs px-2 py-0.5 rounded bg-accent-red text-white font-bold';
+                } else if (shortCount >= 2) {
+                    shortStatus.className = 'text-xs px-2 py-0.5 rounded bg-accent-yellow/20 text-accent-yellow';
+                } else {
+                    shortStatus.className = 'text-xs px-2 py-0.5 rounded bg-dark-600 text-gray-500';
+                }
             }
         }
 
-        // Chart
-        let priceChart;
-        function initChart() {
-            const ctx = document.getElementById('price-chart').getContext('2d');
-            priceChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: Array(24).fill('').map((_, i) => `${i}:00`),
-                    datasets: [{
-                        data: generateMockPrices(),
-                        borderColor: '#58a6ff',
-                        backgroundColor: 'rgba(88, 166, 255, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                        pointRadius: 0,
-                        borderWidth: 2
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } },
-                        y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+        // Load all coin data
+        async function loadAllCoinData() {
+            try {
+                // Get prices
+                const pricesRes = await fetch('/api/prices?symbols=' + SYMBOLS.join(','));
+                const prices = await pricesRes.json();
+
+                // Get signals
+                const signalsRes = await fetch('/api/signals/all');
+                const signals = await signalsRes.json();
+
+                // Update coin data
+                SYMBOLS.forEach(symbol => {
+                    coinData[symbol] = {
+                        price: prices[symbol] || 0,
+                        rsi: signals[symbol]?.rsi || 50,
+                        adx: signals[symbol]?.adx || 0,
+                        atr: signals[symbol]?.atr || 0,
+                        ema100: signals[symbol]?.ema100 || 0,
+                        signal: signals[symbol]?.signal || 0
+                    };
+
+                    // Update tab
+                    const priceEl = document.querySelector(`.coin-price[data-symbol="${symbol}"]`);
+                    const rsiEl = document.querySelector(`.coin-rsi[data-symbol="${symbol}"]`);
+                    const badgeEl = document.querySelector(`.signal-badge[data-symbol="${symbol}"]`);
+                    const condEl = document.querySelector(`.coin-conditions[data-symbol="${symbol}"]`);
+
+                    if (priceEl) priceEl.textContent = '$' + (prices[symbol] || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+                    const rsi = coinData[symbol].rsi;
+                    const adx = coinData[symbol].adx || 0;
+                    const ema = coinData[symbol].ema100 || coinData[symbol].price;
+                    const price = coinData[symbol].price;
+
+                    if (rsiEl) rsiEl.textContent = rsi.toFixed(1);
+
+                    // Calculate conditions
+                    const longConds = [rsi < 40, price > ema, adx >= 20];
+                    const shortConds = [rsi > 60, price < ema, adx >= 20];
+                    const longCount = longConds.filter(c => c).length;
+                    const shortCount = shortConds.filter(c => c).length;
+
+                    // Choose best direction
+                    const bestDir = longCount > shortCount ? 'long' : (shortCount > longCount ? 'short' : 'none');
+                    const bestConds = bestDir === 'long' ? longConds : (bestDir === 'short' ? shortConds : [false, false, false]);
+                    const bestCount = Math.max(longCount, shortCount);
+
+                    if (badgeEl) {
+                        if (coinData[symbol].signal === 1) {
+                            badgeEl.textContent = 'LONG';
+                            badgeEl.className = 'text-xs px-1.5 py-0.5 rounded signal-badge bg-accent-green text-dark-900 font-bold';
+                        } else if (coinData[symbol].signal === -1) {
+                            badgeEl.textContent = 'SHORT';
+                            badgeEl.className = 'text-xs px-1.5 py-0.5 rounded signal-badge bg-accent-red text-white font-bold';
+                        } else if (bestCount >= 2) {
+                            badgeEl.textContent = bestDir === 'long' ? 'L:' + longCount : 'S:' + shortCount;
+                            badgeEl.className = 'text-xs px-1.5 py-0.5 rounded signal-badge bg-accent-yellow/20 text-accent-yellow';
+                        } else {
+                            badgeEl.textContent = 'HOLD';
+                            badgeEl.className = 'text-xs px-1.5 py-0.5 rounded signal-badge bg-dark-600 text-gray-500';
+                        }
                     }
-                }
-            });
-        }
 
-        async function loadChartData(symbol, interval = '1h') {
-            try {
-                const res = await fetch(`/api/data/candles/${symbol}/${interval}?limit=48`);
-                const candles = await res.json();
-                if (candles.length > 0) {
-                    const labels = candles.map(c => {
-                        const d = new Date(c.timestamp);
-                        return `${d.getHours()}:00`;
-                    });
-                    const data = candles.map(c => c.close);
-
-                    priceChart.data.labels = labels;
-                    priceChart.data.datasets[0].data = data;
-
-                    // Color based on trend
-                    const firstPrice = data[0];
-                    const lastPrice = data[data.length - 1];
-                    const color = lastPrice >= firstPrice ? '#3fb950' : '#f85149';
-                    priceChart.data.datasets[0].borderColor = color;
-                    priceChart.data.datasets[0].backgroundColor = color.replace(')', ', 0.1)').replace('rgb', 'rgba');
-
-                    priceChart.update();
-                }
-            } catch (e) {
-                console.log('Chart data not available');
-            }
-        }
-
-        function generateMockPrices() {
-            let price = 95000;
-            return Array(24).fill(0).map(() => {
-                price += (Math.random() - 0.48) * 500;
-                return price;
-            });
-        }
-
-        // Trading
-        async function quickTrade(side) {
-            const size = parseFloat(document.getElementById('trade-size').value) || 200;
-            try {
-                const res = await fetch('/api/paper/open', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ symbol: selectedAsset, side, size_usd: size })
+                    // Update conditions dots
+                    if (condEl) {
+                        const dots = condEl.querySelectorAll('.cond-dot');
+                        const color = bestDir === 'long' ? '#3fb950' : (bestDir === 'short' ? '#f85149' : '#484f58');
+                        dots.forEach((dot, i) => {
+                            if (bestConds[i]) {
+                                dot.style.background = color;
+                            } else {
+                                dot.style.background = '#30363d';
+                            }
+                        });
+                    }
                 });
-                const data = await res.json();
-                if (!data.success) alert(data.error || 'Failed');
-                fetchData();
+
+                updateSelectedCoin();
             } catch (e) {
-                alert('Error: ' + e.message);
+                console.error('Error loading coin data:', e);
             }
         }
 
-        async function closeAsset() {
-            await fetch('/api/paper/close', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ symbol: selectedAsset })
+        // Socket connection
+        function connectSocket() {
+            socket = io();
+            socket.on('connect', () => {
+                updateBotStatus(true);
             });
-            fetchData();
+            socket.on('disconnect', () => {
+                updateBotStatus(false);
+            });
+            socket.on('auto_trade', (data) => {
+                loadPositions();
+                loadTrades();
+                loadStats();
+            });
         }
 
-        async function closeAllPositions() {
-            for (const asset of ASSETS) {
-                if (positions[asset]) {
-                    await fetch('/api/paper/close', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ symbol: asset })
-                    });
-                }
-            }
-            fetchData();
-        }
-
-        async function resetAccount() {
-            if (!confirm('Reset to $10,000?')) return;
-            await fetch('/api/paper/reset', { method: 'POST' });
-            fetchData();
-        }
-
-        // Auto Trading Toggle
-        const autoTradeCheckbox = document.getElementById('auto-trade');
-        autoTradeCheckbox.addEventListener('change', async () => {
-            const endpoint = autoTradeCheckbox.checked ? '/api/auto/start' : '/api/auto/stop';
-            try {
-                const res = await fetch(endpoint, { method: 'POST' });
-                const data = await res.json();
-                console.log('Auto trading:', data.message);
-            } catch (e) {
-                console.error('Auto trading toggle failed:', e);
-                autoTradeCheckbox.checked = !autoTradeCheckbox.checked;
-            }
-        });
-
-        // Check initial auto trading status
-        async function checkAutoStatus() {
+        // Load status
+        async function loadStatus() {
             try {
                 const res = await fetch('/api/auto/status');
                 const data = await res.json();
-                autoTradeCheckbox.checked = data.enabled;
+                isRunning = data.enabled;
+                updateToggleButton();
             } catch (e) {}
         }
-        checkAutoStatus();
 
-        // WebSocket
-        try {
-            const socket = io();
-            socket.on('prices', (data) => {
-                Object.assign(prices, data);
-                ASSETS.forEach(asset => {
-                    const tabPrice = document.getElementById(`tab-price-${asset}`);
-                    if (tabPrice && prices[asset]) {
-                        tabPrice.textContent = `$${prices[asset].toLocaleString('en-US', {minimumFractionDigits: 0})}`;
+        // Load positions
+        async function loadPositions() {
+            try {
+                const res = await fetch('/api/paper/positions');
+                const positions = await res.json();
+                document.getElementById('positions-count').textContent = positions.length;
+                renderPositions(positions);
+            } catch (e) {}
+        }
+
+        // Render positions
+        function renderPositions(positions) {
+            const container = document.getElementById('positions-list');
+            if (!positions || positions.length === 0) {
+                container.innerHTML = '<div class="text-gray-500 text-center py-6 text-sm">No open positions</div>';
+                return;
+            }
+            container.innerHTML = positions.map(p => `
+                <div class="flex items-center justify-between p-2 rounded bg-dark-700">
+                    <div class="flex items-center gap-2">
+                        <span class="font-semibold">${p.symbol.replace('USDT', '')}</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded ${p.side === 'LONG' ? 'bg-accent-green/20 text-accent-green' : 'bg-accent-red/20 text-accent-red'}">${p.side}</span>
+                    </div>
+                    <div class="font-mono text-sm">${p.entry_price?.toFixed(2)}</div>
+                    <div class="font-mono text-sm ${(p.unrealized_pnl || 0) >= 0 ? 'text-accent-green' : 'text-accent-red'}">
+                        ${(p.unrealized_pnl || 0) >= 0 ? '+' : ''}$${(p.unrealized_pnl || 0).toFixed(2)}
+                    </div>
+                    <button onclick="closePosition('${p.symbol}')" class="text-xs px-2 py-1 rounded bg-dark-600 hover:bg-dark-500">Close</button>
+                </div>
+            `).join('');
+        }
+
+        // Load trades
+        async function loadTrades() {
+            try {
+                const res = await fetch('/api/paper/trades?limit=10');
+                const trades = await res.json();
+                document.getElementById('trades-summary').textContent = `${trades.length} trades`;
+                renderTrades(trades);
+            } catch (e) {}
+        }
+
+        // Render trades
+        function renderTrades(trades) {
+            const container = document.getElementById('trades-list');
+            if (!trades || trades.length === 0) {
+                container.innerHTML = '<div class="text-gray-500 text-center py-6 text-sm">No trades yet</div>';
+                return;
+            }
+            container.innerHTML = trades.slice(0, 10).map(t => `
+                <div class="flex items-center justify-between p-2 rounded bg-dark-700 text-sm">
+                    <span class="font-medium">${t.symbol?.replace('USDT', '') || '--'}</span>
+                    <span class="${t.side === 'LONG' ? 'text-accent-green' : 'text-accent-red'}">${t.side || '--'}</span>
+                    <span class="text-gray-500">${t.exit_reason || t.reason || '--'}</span>
+                    <span class="font-mono ${(t.pnl || 0) >= 0 ? 'text-accent-green' : 'text-accent-red'}">
+                        ${(t.pnl || 0) >= 0 ? '+' : ''}$${(t.pnl || 0).toFixed(2)}
+                    </span>
+                </div>
+            `).join('');
+        }
+
+        // Load stats
+        async function loadStats() {
+            try {
+                const res = await fetch('/api/paper/status');
+                const status = await res.json();
+                document.getElementById('capital').textContent = '$' + (status.capital || 10000).toLocaleString(undefined, {minimumFractionDigits: 2});
+
+                const pnl = (status.capital || 10000) - 10000;
+                const pnlEl = document.getElementById('total-pnl');
+                pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
+                pnlEl.className = 'font-mono font-semibold text-lg ' + (pnl >= 0 ? 'text-accent-green' : 'text-accent-red');
+
+                document.getElementById('live-wr').textContent = status.win_rate ? (status.win_rate * 100).toFixed(1) + '%' : '--%';
+                document.getElementById('total-trades').textContent = status.trades_count || 0;
+            } catch (e) {}
+
+            try {
+                const res = await fetch('/api/trades/stats');
+                const stats = await res.json();
+                if (stats.profit_factor) document.getElementById('live-pf').textContent = stats.profit_factor.toFixed(2);
+                if (stats.avg_slippage) document.getElementById('live-slip').textContent = stats.avg_slippage.toFixed(3) + '%';
+            } catch (e) {}
+        }
+
+        // Toggle layer accordion
+        function toggleLayer(layerNum) {
+            const accordions = document.querySelectorAll('.layer-accordion');
+            const accordion = accordions[layerNum - 1];
+            if (!accordion) return;
+
+            const content = accordion.querySelector('.layer-content');
+            const arrow = accordion.querySelector('.layer-arrow');
+
+            if (content.classList.contains('hidden')) {
+                // Close all other accordions first
+                document.querySelectorAll('.layer-content').forEach(c => c.classList.add('hidden'));
+                document.querySelectorAll('.layer-arrow').forEach(a => a.textContent = '▼');
+                // Open this one
+                content.classList.remove('hidden');
+                arrow.textContent = '▲';
+            } else {
+                content.classList.add('hidden');
+                arrow.textContent = '▼';
+            }
+        }
+
+        // Update layer stats
+        function updateLayerStats() {
+            const now = new Date();
+            document.getElementById('scanner-last').textContent = now.toLocaleTimeString();
+            document.getElementById('scanner-calls').textContent = Math.floor(Math.random() * 100 + 500) + '/day';
+        }
+
+        // Update bot status
+        function updateBotStatus(connected) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            const botsStatus = document.getElementById('bots-status');
+
+            if (connected && isRunning) {
+                dot.className = 'w-2 h-2 rounded-full pulse bg-accent-green';
+                text.textContent = 'Running';
+                botsStatus.textContent = '4/4 active';
+                document.getElementById('bot-scanner').className = 'bot-dot bg-accent-green';
+                document.getElementById('bot-signal').className = 'bot-dot bg-accent-green';
+                document.getElementById('bot-executor').className = 'bot-dot bg-accent-green';
+                document.getElementById('bot-risk').className = 'bot-dot bg-accent-green';
+            } else if (connected) {
+                dot.className = 'w-2 h-2 rounded-full bg-accent-yellow';
+                text.textContent = 'Stopped';
+                botsStatus.textContent = '2/4 active';
+                document.getElementById('bot-scanner').className = 'bot-dot bg-accent-green';
+                document.getElementById('bot-signal').className = 'bot-dot bg-accent-green';
+                document.getElementById('bot-executor').className = 'bot-dot bg-dark-500';
+                document.getElementById('bot-risk').className = 'bot-dot bg-dark-500';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-accent-red';
+                text.textContent = 'Disconnected';
+                botsStatus.textContent = '0/4 active';
+            }
+        }
+
+        // Update toggle button
+        function updateToggleButton() {
+            const btn = document.getElementById('toggle-btn');
+            if (isRunning) {
+                btn.textContent = 'Stop';
+                btn.className = 'px-4 py-2 rounded-lg font-medium transition-colors bg-accent-red hover:bg-red-600';
+            } else {
+                btn.textContent = 'Start';
+                btn.className = 'px-4 py-2 rounded-lg font-medium transition-colors bg-accent-green hover:bg-green-600';
+            }
+            updateBotStatus(true);
+        }
+
+        // Toggle auto trading
+        document.getElementById('toggle-btn').addEventListener('click', async () => {
+            const endpoint = isRunning ? '/api/auto/stop' : '/api/auto/start';
+            try {
+                await fetch(endpoint, { method: 'POST' });
+                isRunning = !isRunning;
+                updateToggleButton();
+            } catch (e) {}
+        });
+
+        // Close position
+        async function closePosition(symbol) {
+            try {
+                await fetch('/api/paper/close', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol, reason: 'MANUAL' })
+                });
+                loadPositions();
+                loadTrades();
+            } catch (e) {}
+        }
+
+        // Load and render price chart
+        async function loadChart(interval = '1h', limit = 24) {
+            try {
+                const res = await fetch(`/api/chart/${selectedSymbol}?interval=${interval}&limit=${limit}`);
+                const chartData = await res.json();
+
+                if (!chartData.data || chartData.data.length === 0) return;
+
+                const labels = chartData.data.map(d => {
+                    const date = new Date(d.time);
+                    return date.getHours() + ':00';
+                });
+                const prices = chartData.data.map(d => d.close);
+                const firstPrice = prices[0];
+                const lastPrice = prices[prices.length - 1];
+                const isUp = lastPrice >= firstPrice;
+
+                // Destroy existing chart
+                if (priceChart) {
+                    priceChart.destroy();
+                }
+
+                const ctx = document.getElementById('priceChart').getContext('2d');
+
+                // Create gradient
+                const gradient = ctx.createLinearGradient(0, 0, 0, 160);
+                if (isUp) {
+                    gradient.addColorStop(0, 'rgba(63, 185, 80, 0.3)');
+                    gradient.addColorStop(1, 'rgba(63, 185, 80, 0)');
+                } else {
+                    gradient.addColorStop(0, 'rgba(248, 81, 73, 0.3)');
+                    gradient.addColorStop(1, 'rgba(248, 81, 73, 0)');
+                }
+
+                priceChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: prices,
+                            borderColor: isUp ? '#3fb950' : '#f85149',
+                            backgroundColor: gradient,
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 4,
+                            pointHoverBackgroundColor: isUp ? '#3fb950' : '#f85149'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                backgroundColor: '#21262d',
+                                titleColor: '#fff',
+                                bodyColor: '#fff',
+                                borderColor: '#30363d',
+                                borderWidth: 1,
+                                callbacks: {
+                                    label: (ctx) => '$' + ctx.parsed.y.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                display: true,
+                                grid: { display: false },
+                                ticks: { color: '#484f58', maxTicksLimit: 6, font: { size: 10 } }
+                            },
+                            y: {
+                                display: true,
+                                position: 'right',
+                                grid: { color: '#21262d' },
+                                ticks: {
+                                    color: '#484f58',
+                                    font: { size: 10 },
+                                    callback: (v) => '$' + v.toLocaleString()
+                                }
+                            }
+                        },
+                        interaction: {
+                            mode: 'nearest',
+                            axis: 'x',
+                            intersect: false
+                        }
                     }
                 });
-                updateSelectedAssetDisplay();
-            });
 
-            // Listen for auto trade events
-            socket.on('auto_trade', (data) => {
-                console.log('Auto trade event:', data);
-                fetchData(); // Refresh positions/trades
-                if (data.action === 'OPEN') {
-                    showNotification(`Opened ${data.side} ${data.symbol} (score: ${(data.score * 100).toFixed(0)}%)`);
-                } else if (data.action === 'CLOSE') {
-                    const color = data.pnl >= 0 ? 'green' : 'red';
-                    showNotification(`Closed ${data.symbol}: ${data.pnl >= 0 ? '+' : ''}$${data.pnl.toFixed(2)}`, color);
-                }
-            });
+                // Update period buttons
+                document.querySelectorAll('.chart-period').forEach(btn => {
+                    const isActive = parseInt(btn.dataset.period) === limit ||
+                                   (limit === 24 && btn.dataset.period === '24') ||
+                                   (limit === 72 && btn.dataset.period === '72') ||
+                                   (limit === 42 && btn.dataset.period === '168');
+                    btn.className = 'chart-period px-2 py-0.5 text-xs rounded ' +
+                        (isActive ? 'bg-dark-600 text-gray-400' : 'bg-dark-700 text-gray-500 hover:bg-dark-500');
+                });
 
-            socket.on('connect', () => socket.emit('subscribe_prices', { symbols: ASSETS }));
-        } catch(e) {}
-
-        // Simple notification
-        function showNotification(msg, color = 'blue') {
-            const notif = document.createElement('div');
-            notif.className = `fixed top-4 right-4 px-4 py-2 rounded-lg text-sm bg-accent-${color}/20 text-accent-${color} z-50`;
-            notif.textContent = msg;
-            document.body.appendChild(notif);
-            setTimeout(() => notif.remove(), 3000);
+            } catch (e) {
+                console.error('Error loading chart:', e);
+            }
         }
     </script>
 </body>

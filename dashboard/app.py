@@ -18,6 +18,8 @@ from bots.strategies import get_strategy, STRATEGIES
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = config.dashboard.secret_key
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
@@ -496,17 +498,77 @@ def calculate_atr(highs, lows, closes, period=14):
     return atr
 
 
+def calculate_adx(highs, lows, closes, period=14):
+    """Calculate ADX for trend strength filter"""
+    import numpy as np
+    n = len(closes)
+    plus_dm = np.zeros(n)
+    minus_dm = np.zeros(n)
+
+    for i in range(1, n):
+        up_move = highs[i] - highs[i-1]
+        down_move = lows[i-1] - lows[i]
+        if up_move > down_move and up_move > 0:
+            plus_dm[i] = up_move
+        if down_move > up_move and down_move > 0:
+            minus_dm[i] = down_move
+
+    # Calculate ATR
+    tr = np.zeros(n)
+    tr[0] = highs[0] - lows[0]
+    for i in range(1, n):
+        tr[i] = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+
+    atr = np.zeros(n)
+    atr[period-1] = np.mean(tr[:period])
+    for i in range(period, n):
+        atr[i] = (atr[i-1] * (period-1) + tr[i]) / period
+
+    atr_safe = np.where(atr == 0, 0.0001, atr)
+
+    # Smooth DM
+    smooth_plus = np.zeros(n)
+    smooth_minus = np.zeros(n)
+    smooth_plus[period] = np.sum(plus_dm[1:period+1])
+    smooth_minus[period] = np.sum(minus_dm[1:period+1])
+
+    for i in range(period+1, n):
+        smooth_plus[i] = smooth_plus[i-1] - smooth_plus[i-1]/period + plus_dm[i]
+        smooth_minus[i] = smooth_minus[i-1] - smooth_minus[i-1]/period + minus_dm[i]
+
+    plus_di = 100 * smooth_plus / (atr_safe * period)
+    minus_di = 100 * smooth_minus / (atr_safe * period)
+
+    dx = np.zeros(n)
+    for i in range(period, n):
+        sum_di = plus_di[i] + minus_di[i]
+        if sum_di > 0:
+            dx[i] = 100 * abs(plus_di[i] - minus_di[i]) / sum_di
+
+    adx = np.zeros(n)
+    if 2*period < n:
+        adx[2*period] = np.mean(dx[period:2*period+1])
+        for i in range(2*period+1, n):
+            adx[i] = (adx[i-1] * (period-1) + dx[i]) / period
+
+    return adx[-1] if len(adx) > 0 else 0
+
+
 def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
     """
-    PROVEN STRATEGY: RSI + Trend Filter
-    Backtested: 80.4% Win Rate, Profit Factor 5.55
+    PROVEN STRATEGY v2: RSI + Trend Filter (Optimized)
 
-    Parameters (optimized on 259K candles):
-    - RSI oversold: 35
-    - RSI overbought: 75
+    Backtested on out-of-sample (2024-2025):
+    - 395 trades, PF=1.33, Win Rate=59.2%
+
+    Parameters (optimized with train/test split):
+    - RSI oversold: 40 (was 35)
+    - RSI overbought: 60 (was 70)
     - Trend EMA: 100
-    - Stop: 3.0 × ATR
-    - Target: 2.0 × ATR
+    - ADX threshold: 20
+    - Stop: 2.0 × ATR
+    - Target: 4.0 × ATR
+    - Trailing: activate @1.5×ATR, distance 1.0×ATR
     """
     import numpy as np
 
@@ -522,18 +584,23 @@ def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
     rsi = calculate_rsi(closes, 14)
     ema_100 = calculate_ema(closes, 100)
     atr = calculate_atr(highs, lows, closes, 14)
+    adx = calculate_adx(highs, lows, closes, 14)
 
     price = closes[-1]
     trend_ema = ema_100[-1]
 
     signal = 0  # 0 = no signal, 1 = buy, -1 = sell
 
-    # LONG: RSI < 35 AND price > EMA100 (oversold in uptrend)
-    if rsi < 35 and price > trend_ema:
+    # ADX filter: skip if no trend
+    if adx < 20:
+        return 0, atr, rsi
+
+    # LONG: RSI < 40 AND price > EMA100 (oversold in uptrend)
+    if rsi < 40 and price > trend_ema:
         signal = 1
 
-    # SHORT: RSI > 75 AND price < EMA100 (overbought in downtrend)
-    elif rsi > 75 and price < trend_ema:
+    # SHORT: RSI > 60 AND price < EMA100 (overbought in downtrend)
+    elif rsi > 60 and price < trend_ema:
         signal = -1
 
     return signal, atr, rsi
@@ -541,22 +608,24 @@ def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
 
 def auto_trading_loop():
     """
-    PROVEN STRATEGY Auto Trading Loop
+    PROVEN STRATEGY v2 Auto Trading Loop
 
-    Strategy: RSI + Trend Filter (80.4% Win Rate, PF 5.55)
-    - LONG: RSI < 35 AND price > EMA100
-    - SHORT: RSI > 75 AND price < EMA100
-    - Stop: 3.0 × ATR
-    - Target: 2.0 × ATR
+    Strategy: RSI + Trend Filter (optimized with train/test split)
+    Out-of-sample results (2024-2025): 395 trades, PF=1.33, WR=59.2%
+
+    - LONG: RSI < 40 AND price > EMA100 AND ADX > 20
+    - SHORT: RSI > 60 AND price < EMA100 AND ADX > 20
+    - Stop: 2.0 × ATR
+    - Target: 4.0 × ATR
     """
     global _auto_trading_enabled
 
-    logger.info("Auto trading loop started - PROVEN STRATEGY (80% Win Rate)")
+    logger.info("Auto trading loop started - PROVEN STRATEGY v2 (PF=1.33, WR=59%)")
     symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT']
 
-    # Strategy parameters (optimized on 259K candles)
-    STOP_ATR_MULT = 3.0
-    TARGET_ATR_MULT = 2.0
+    # Strategy parameters (optimized with train/test split)
+    STOP_ATR_MULT = 2.0      # was 3.0
+    TARGET_ATR_MULT = 4.0    # was 2.0 (better R:R ratio)
     POSITION_SIZE_PCT = 0.02  # 2% of capital per trade
 
     while _auto_trading_enabled:
@@ -713,6 +782,186 @@ def auto_trading_status():
     return jsonify({
         'enabled': _auto_trading_enabled,
         'message': 'Running' if _auto_trading_enabled else 'Stopped'
+    })
+
+
+# ============== Trade Logger API ==============
+
+def get_trade_logger():
+    """Get trade logger instance"""
+    try:
+        from core.trade_logger import trade_logger
+        return trade_logger
+    except Exception as e:
+        logger.error(f"Failed to import trade_logger: {e}")
+        return None
+
+
+@app.route('/api/trades/today')
+def trades_today():
+    """Get today's trades"""
+    tl = get_trade_logger()
+    if tl:
+        trades = tl.get_today_trades()
+        return jsonify([{
+            'id': t.id,
+            'symbol': t.symbol,
+            'side': t.side,
+            'entry_time': t.entry_time,
+            'entry_price': t.entry_price,
+            'entry_slippage': t.entry_slippage,
+            'exit_time': t.exit_time,
+            'exit_price': t.exit_price,
+            'exit_reason': t.exit_reason,
+            'pnl_usd': t.pnl_usd,
+            'pnl_pct': t.pnl_pct,
+            'duration_hours': t.duration_hours
+        } for t in trades])
+    return jsonify([])
+
+
+@app.route('/api/trades/recent')
+def trades_recent():
+    """Get recent trades"""
+    limit = request.args.get('limit', 50, type=int)
+    tl = get_trade_logger()
+    if tl:
+        trades = tl.get_recent_trades(limit=limit)
+        return jsonify([{
+            'id': t.id,
+            'symbol': t.symbol,
+            'side': t.side,
+            'entry_time': t.entry_time,
+            'entry_price': t.entry_price,
+            'entry_slippage': t.entry_slippage,
+            'exit_time': t.exit_time,
+            'exit_price': t.exit_price,
+            'exit_reason': t.exit_reason,
+            'pnl_usd': t.pnl_usd,
+            'pnl_pct': t.pnl_pct,
+            'duration_hours': t.duration_hours
+        } for t in trades])
+    return jsonify([])
+
+
+@app.route('/api/trades/stats')
+def trades_stats():
+    """Get trading statistics"""
+    days = request.args.get('days', 30, type=int)
+    tl = get_trade_logger()
+    if tl:
+        return jsonify(tl.get_statistics(days=days))
+    return jsonify({
+        'total_trades': 0,
+        'win_rate': 0,
+        'profit_factor': 0,
+        'total_pnl': 0,
+        'avg_pnl': 0,
+        'avg_duration': 0,
+        'avg_slippage': 0
+    })
+
+
+@app.route('/api/signals/all')
+def signals_all():
+    """Get signals and indicators for all symbols"""
+    import numpy as np
+    symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT']
+    result = {}
+
+    try:
+        loader = get_binance_loader()
+
+        for symbol in symbols:
+            try:
+                klines = loader.client.get_klines(symbol=symbol, interval='1h', limit=120)
+                closes = np.array([float(k[4]) for k in klines])
+                highs = np.array([float(k[2]) for k in klines])
+                lows = np.array([float(k[3]) for k in klines])
+
+                rsi = calculate_rsi(closes, 14)
+                atr = calculate_atr(highs, lows, closes, 14)
+                adx = calculate_adx(highs, lows, closes, 14)
+                ema_100 = calculate_ema(closes, 100)
+
+                price = closes[-1]
+                trend_ema = ema_100[-1]
+
+                # Calculate signal
+                signal = 0
+                if adx >= 20:
+                    if rsi < 40 and price > trend_ema:
+                        signal = 1  # LONG
+                    elif rsi > 60 and price < trend_ema:
+                        signal = -1  # SHORT
+
+                result[symbol] = {
+                    'rsi': float(rsi),
+                    'adx': float(adx),
+                    'atr': float(atr),
+                    'ema100': float(trend_ema),
+                    'price': float(price),
+                    'signal': signal
+                }
+            except Exception as e:
+                result[symbol] = {'rsi': 50, 'adx': 0, 'atr': 0, 'signal': 0}
+
+    except Exception as e:
+        logger.error(f"Error getting signals: {e}")
+
+    return jsonify(result)
+
+
+@app.route('/api/chart/<symbol>')
+def chart_data(symbol):
+    """Get historical price data for chart"""
+    interval = request.args.get('interval', '1h')
+    limit = request.args.get('limit', 48, type=int)  # 48 hours default
+
+    try:
+        loader = get_binance_loader()
+        klines = loader.client.get_klines(symbol=symbol, interval=interval, limit=limit)
+
+        data = []
+        for k in klines:
+            data.append({
+                'time': k[0],  # Open time in ms
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+                'volume': float(k[5])
+            })
+
+        return jsonify({
+            'symbol': symbol,
+            'interval': interval,
+            'data': data
+        })
+    except Exception as e:
+        logger.error(f"Error getting chart data: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trades/comparison')
+def trades_comparison():
+    """Compare live results with backtest"""
+    # Backtest results (from our optimization)
+    backtest_stats = {
+        'win_rate': 59.2,
+        'profit_factor': 1.33,
+        'avg_pnl': 0,
+        'trades': 395
+    }
+
+    tl = get_trade_logger()
+    if tl:
+        return jsonify(tl.compare_with_backtest(backtest_stats))
+
+    return jsonify({
+        'backtest': backtest_stats,
+        'live': {},
+        'comparison': {}
     })
 
 
