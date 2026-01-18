@@ -380,10 +380,17 @@
                         <span class="text-gray-500">RSI</span>
                         <span class="font-mono coin-rsi" data-symbol="${symbol}">--</span>
                     </div>
-                    <div class="flex gap-1 mt-1.5 coin-conditions" data-symbol="${symbol}">
-                        <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
-                        <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
-                        <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                    <div class="mt-1.5 space-y-1 coin-conditions" data-symbol="${symbol}">
+                        <div class="flex gap-1 long-dots">
+                            <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                            <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                            <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                        </div>
+                        <div class="flex gap-1 short-dots">
+                            <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                            <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                            <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
+                        </div>
                     </div>
                 </div>
             `).join('');
@@ -566,16 +573,16 @@
                         }
                     }
 
-                    // Update conditions dots
+                    // Update conditions dots - two rows: LONG (green) and SHORT (red)
                     if (condEl) {
-                        const dots = condEl.querySelectorAll('.cond-dot');
-                        const color = bestDir === 'long' ? '#3fb950' : (bestDir === 'short' ? '#f85149' : '#484f58');
-                        dots.forEach((dot, i) => {
-                            if (bestConds[i]) {
-                                dot.style.background = color;
-                            } else {
-                                dot.style.background = '#30363d';
-                            }
+                        const longDots = condEl.querySelectorAll('.long-dots .cond-dot');
+                        const shortDots = condEl.querySelectorAll('.short-dots .cond-dot');
+
+                        longDots.forEach((dot, i) => {
+                            dot.style.background = longConds[i] ? '#3fb950' : '#30363d';
+                        });
+                        shortDots.forEach((dot, i) => {
+                            dot.style.background = shortConds[i] ? '#f85149' : '#30363d';
                         });
                     }
                 });
