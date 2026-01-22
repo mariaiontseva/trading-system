@@ -122,7 +122,11 @@ def paper_positions():
         except:
             pass
 
-    return jsonify([p.to_dict() for p in engine.positions.values()])
+    response = jsonify([p.to_dict() for p in engine.positions.values()])
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 @app.route('/api/paper/trades')

@@ -635,11 +635,13 @@
         // Load positions
         async function loadPositions() {
             try {
-                const res = await fetch('/api/paper/positions');
+                const res = await fetch('/api/paper/positions?t=' + Date.now());
                 const positions = await res.json();
                 document.getElementById('positions-count').textContent = positions.length;
                 renderPositions(positions);
-            } catch (e) {}
+            } catch (e) {
+                console.error('Failed to load positions:', e);
+            }
         }
 
         // Render positions
