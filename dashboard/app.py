@@ -608,25 +608,74 @@ def calculate_adx(highs, lows, closes, period=14):
     return adx[-1] if len(adx) > 0 else 0
 
 
-def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
+def calculate_live_signal_multitf(loader, symbol: str) -> tuple:
     """
-    PROVEN STRATEGY v2: RSI + Trend Filter (Optimized)
+    MULTI-TIMEFRAME STRATEGY: 15m entry + 1h trend confirmation
 
-    Backtested on out-of-sample (2024-2025):
-    - 395 trades, PF=1.33, Win Rate=59.2%
+    - 15m: Entry signals (RSI + ADX) - 4x more opportunities
+    - 1h: Trend confirmation (Price vs EMA100)
+    - Only enter when both timeframes agree
 
-    Parameters (optimized with train/test split):
-    - RSI oversold: 40 (was 35)
-    - RSI overbought: 60 (was 70)
-    - Trend EMA: 100
-    - ADX threshold: 20
-    - Stop: 2.0 × ATR
-    - Target: 4.0 × ATR
-    - Trailing: activate @1.5×ATR, distance 1.0×ATR
+    Returns: (signal, atr, rsi_15m, rsi_1h)
     """
     import numpy as np
 
-    # Need at least 100 candles for EMA100
+    try:
+        # Get 1h data for trend confirmation
+        klines_1h = loader.client.get_klines(symbol=symbol, interval='1h', limit=120)
+        closes_1h = np.array([float(k[4]) for k in klines_1h])
+        highs_1h = np.array([float(k[2]) for k in klines_1h])
+        lows_1h = np.array([float(k[3]) for k in klines_1h])
+
+        ema_100_1h = calculate_ema(closes_1h, 100)
+        trend_ema = ema_100_1h[-1]
+
+        # Get 15m data for entry signals
+        klines_15m = loader.client.get_klines(symbol=symbol, interval='15m', limit=120)
+        closes_15m = np.array([float(k[4]) for k in klines_15m])
+        highs_15m = np.array([float(k[2]) for k in klines_15m])
+        lows_15m = np.array([float(k[3]) for k in klines_15m])
+
+        rsi_15m = calculate_rsi(closes_15m, 14)
+        atr_15m = calculate_atr(highs_15m, lows_15m, closes_15m, 14)
+        adx_15m = calculate_adx(highs_15m, lows_15m, closes_15m, 14)
+        rsi_1h = calculate_rsi(closes_1h, 14)
+
+        price = closes_15m[-1]
+
+        # 1h trend direction
+        trend_bullish = price > trend_ema
+        trend_bearish = price < trend_ema
+
+        # 15m entry signal
+        signal_15m = 0
+        if adx_15m >= ADX_MIN:
+            if rsi_15m < RSI_LONG:
+                signal_15m = 1  # LONG signal
+            elif rsi_15m > RSI_SHORT:
+                signal_15m = -1  # SHORT signal
+
+        # Combined signal: only enter if 15m and 1h agree
+        signal = 0
+        if signal_15m == 1 and trend_bullish:
+            signal = 1  # LONG confirmed
+        elif signal_15m == -1 and trend_bearish:
+            signal = -1  # SHORT confirmed
+
+        return signal, atr_15m, rsi_15m, rsi_1h, price
+
+    except Exception as e:
+        logger.error(f"Error calculating signal for {symbol}: {e}")
+        return 0, 0, 50, 50, 0
+
+
+def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
+    """
+    LEGACY: Single timeframe signal (1h only)
+    Kept for backwards compatibility
+    """
+    import numpy as np
+
     if len(closes) < 100:
         return 0, 0, 0
 
@@ -634,7 +683,6 @@ def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
     highs = np.array(highs)
     lows = np.array(lows)
 
-    # Calculate indicators
     rsi = calculate_rsi(closes, 14)
     ema_100 = calculate_ema(closes, 100)
     atr = calculate_atr(highs, lows, closes, 14)
@@ -643,17 +691,13 @@ def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
     price = closes[-1]
     trend_ema = ema_100[-1]
 
-    signal = 0  # 0 = no signal, 1 = buy, -1 = sell
+    signal = 0
 
-    # ADX filter: skip if no trend
     if adx < ADX_MIN:
         return 0, atr, rsi
 
-    # LONG: RSI < 40 AND price > EMA100 (oversold in uptrend)
     if rsi < RSI_LONG and price > trend_ema:
         signal = 1
-
-    # SHORT: RSI > 60 AND price < EMA100 (overbought in downtrend)
     elif rsi > RSI_SHORT and price < trend_ema:
         signal = -1
 
@@ -662,24 +706,27 @@ def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
 
 def auto_trading_loop():
     """
-    PROVEN STRATEGY v2 Auto Trading Loop
+    MULTI-TIMEFRAME Auto Trading Loop
 
-    Strategy: RSI + Trend Filter (optimized with train/test split)
-    Out-of-sample results (2024-2025): 395 trades, PF=1.33, WR=59.2%
+    Strategy: 15m entry + 1h trend confirmation
+    - 15m: RSI + ADX for entry signals (4x more opportunities)
+    - 1h: EMA100 trend confirmation
+    - Only enter when both timeframes agree
 
-    - LONG: RSI < 40 AND price > EMA100 AND ADX > 20
-    - SHORT: RSI > 60 AND price < EMA100 AND ADX > 20
+    Parameters:
+    - RSI Long: < 42, RSI Short: > 58
+    - ADX threshold: 18
     - Stop: 2.0 × ATR
     - Target: 4.0 × ATR
     """
     global _auto_trading_enabled
 
-    logger.info("Auto trading loop started - PROVEN STRATEGY v2 (PF=1.33, WR=59%)")
+    logger.info("Auto trading loop started - MULTI-TIMEFRAME (15m + 1h)")
     symbols = SYMBOLS
 
-    # Strategy parameters (optimized with train/test split)
-    STOP_ATR_MULT = 2.0      # was 3.0
-    TARGET_ATR_MULT = 4.0    # was 2.0 (better R:R ratio)
+    # Strategy parameters
+    STOP_ATR_MULT = 2.0
+    TARGET_ATR_MULT = 4.0
     POSITION_SIZE_PCT = 0.02  # 2% of capital per trade
 
     while _auto_trading_enabled:
@@ -688,20 +735,14 @@ def auto_trading_loop():
             loader = get_binance_loader()
 
             for symbol in symbols:
-                # Get live candles from Binance (need 100+ for EMA100)
                 try:
-                    klines = loader.client.get_klines(symbol=symbol, interval='1h', limit=120)
-                    closes = [float(k[4]) for k in klines]
-                    highs = [float(k[2]) for k in klines]
-                    lows = [float(k[3]) for k in klines]
-                    price = closes[-1]
+                    # Use multi-timeframe signal calculation
+                    signal, atr, rsi_15m, rsi_1h, price = calculate_live_signal_multitf(loader, symbol)
                     paper.update_price(symbol, price)
+                    rsi = rsi_15m  # Use 15m RSI for logging
                 except Exception as e:
-                    logger.error(f"Failed to get klines for {symbol}: {e}")
+                    logger.error(f"Failed to get signal for {symbol}: {e}")
                     continue
-
-                # Calculate signal using PROVEN strategy
-                signal, atr, rsi = calculate_live_signal(closes, highs, lows)
 
                 # Check if we already have a position
                 has_position = symbol in paper.positions
