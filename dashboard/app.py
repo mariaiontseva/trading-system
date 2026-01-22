@@ -957,82 +957,98 @@ def trades_stats():
     })
 
 
+# Cache for signals data
+_signals_cache = {}
+_signals_cache_time = 0
+SIGNALS_CACHE_TTL = 10  # seconds
+
+
 @app.route('/api/signals/all')
 def signals_all():
-    """Get signals and indicators for all symbols (multi-timeframe: 15m + 1h)"""
+    """Get signals and indicators for all symbols (multi-timeframe: 15m + 1h) with caching"""
     import numpy as np
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
+
+    global _signals_cache, _signals_cache_time
+
+    # Return cached data if fresh
+    if time.time() - _signals_cache_time < SIGNALS_CACHE_TTL and _signals_cache:
+        return jsonify(_signals_cache)
+
     symbols = SYMBOLS
     result = {}
+    loader = get_binance_loader()
+
+    def fetch_symbol_data(symbol):
+        """Fetch and calculate signals for one symbol"""
+        try:
+            # Get both timeframes
+            klines_1h = loader.client.get_klines(symbol=symbol, interval='1h', limit=120)
+            klines_15m = loader.client.get_klines(symbol=symbol, interval='15m', limit=120)
+
+            closes_1h = np.array([float(k[4]) for k in klines_1h])
+            highs_1h = np.array([float(k[2]) for k in klines_1h])
+            lows_1h = np.array([float(k[3]) for k in klines_1h])
+
+            closes_15m = np.array([float(k[4]) for k in klines_15m])
+            highs_15m = np.array([float(k[2]) for k in klines_15m])
+            lows_15m = np.array([float(k[3]) for k in klines_15m])
+
+            rsi_1h = calculate_rsi(closes_1h, 14)
+            adx_1h = calculate_adx(highs_1h, lows_1h, closes_1h, 14)
+            ema_100_1h = calculate_ema(closes_1h, 100)
+
+            rsi_15m = calculate_rsi(closes_15m, 14)
+            atr_15m = calculate_atr(highs_15m, lows_15m, closes_15m, 14)
+            adx_15m = calculate_adx(highs_15m, lows_15m, closes_15m, 14)
+
+            price = closes_15m[-1]
+            trend_ema = ema_100_1h[-1]
+
+            # Calculate signals
+            signal = 0
+            signal_15m = 0
+            signal_1h = 1 if price > trend_ema else -1
+
+            if adx_15m >= ADX_MIN:
+                if rsi_15m < RSI_LONG:
+                    signal_15m = 1
+                elif rsi_15m > RSI_SHORT:
+                    signal_15m = -1
+
+            if signal_15m == 1 and signal_1h == 1:
+                signal = 1
+            elif signal_15m == -1 and signal_1h == -1:
+                signal = -1
+
+            return symbol, {
+                'rsi': float(rsi_15m),
+                'rsi_1h': float(rsi_1h),
+                'adx': float(adx_15m),
+                'adx_1h': float(adx_1h),
+                'atr': float(atr_15m),
+                'ema100': float(trend_ema),
+                'price': float(price),
+                'signal': signal,
+                'signal_15m': signal_15m,
+                'signal_1h': signal_1h
+            }
+        except Exception as e:
+            logger.error(f"Error fetching {symbol}: {e}")
+            return symbol, {'rsi': 50, 'adx': 0, 'atr': 0, 'signal': 0}
 
     try:
-        loader = get_binance_loader()
+        # Parallel fetch - 5 threads
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(fetch_symbol_data, sym): sym for sym in symbols}
+            for future in as_completed(futures):
+                symbol, data = future.result()
+                result[symbol] = data
 
-        for symbol in symbols:
-            try:
-                # Get 1h data for trend confirmation
-                klines_1h = loader.client.get_klines(symbol=symbol, interval='1h', limit=120)
-                closes_1h = np.array([float(k[4]) for k in klines_1h])
-                highs_1h = np.array([float(k[2]) for k in klines_1h])
-                lows_1h = np.array([float(k[3]) for k in klines_1h])
-
-                rsi_1h = calculate_rsi(closes_1h, 14)
-                adx_1h = calculate_adx(highs_1h, lows_1h, closes_1h, 14)
-                ema_100_1h = calculate_ema(closes_1h, 100)
-
-                # Get 15m data for entry signals (more frequent)
-                klines_15m = loader.client.get_klines(symbol=symbol, interval='15m', limit=120)
-                closes_15m = np.array([float(k[4]) for k in klines_15m])
-                highs_15m = np.array([float(k[2]) for k in klines_15m])
-                lows_15m = np.array([float(k[3]) for k in klines_15m])
-
-                rsi_15m = calculate_rsi(closes_15m, 14)
-                atr_15m = calculate_atr(highs_15m, lows_15m, closes_15m, 14)
-                adx_15m = calculate_adx(highs_15m, lows_15m, closes_15m, 14)
-
-                price = closes_15m[-1]
-                trend_ema = ema_100_1h[-1]
-
-                # Multi-timeframe signal:
-                # - 1h confirms trend direction (price vs EMA)
-                # - 15m triggers entry (RSI + ADX)
-                signal = 0
-                signal_15m = 0
-                signal_1h = 0
-
-                # 1h trend direction
-                if price > trend_ema:
-                    signal_1h = 1  # Bullish trend
-                elif price < trend_ema:
-                    signal_1h = -1  # Bearish trend
-
-                # 15m entry signal
-                if adx_15m >= ADX_MIN:
-                    if rsi_15m < RSI_LONG:
-                        signal_15m = 1  # LONG signal
-                    elif rsi_15m > RSI_SHORT:
-                        signal_15m = -1  # SHORT signal
-
-                # Combined: only enter if 15m and 1h agree
-                if signal_15m == 1 and signal_1h == 1:
-                    signal = 1  # LONG confirmed
-                elif signal_15m == -1 and signal_1h == -1:
-                    signal = -1  # SHORT confirmed
-
-                result[symbol] = {
-                    'rsi': float(rsi_15m),  # Show 15m RSI (more responsive)
-                    'rsi_1h': float(rsi_1h),
-                    'adx': float(adx_15m),
-                    'adx_1h': float(adx_1h),
-                    'atr': float(atr_15m),
-                    'ema100': float(trend_ema),
-                    'price': float(price),
-                    'signal': signal,
-                    'signal_15m': signal_15m,
-                    'signal_1h': signal_1h
-                }
-            except Exception as e:
-                logger.error(f"Error getting signals for {symbol}: {e}")
-                result[symbol] = {'rsi': 50, 'adx': 0, 'atr': 0, 'signal': 0}
+        # Update cache
+        _signals_cache = result
+        _signals_cache_time = time.time()
 
     except Exception as e:
         logger.error(f"Error getting signals: {e}")
