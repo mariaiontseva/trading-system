@@ -33,13 +33,24 @@ class PaperPosition:
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
-    
+    # Trailing stop fields
+    initial_stop_loss: Optional[float] = None
+    highest_price: Optional[float] = None
+    lowest_price: Optional[float] = None
+    break_even_triggered: bool = False
+
     def update_price(self, price: float):
         self.current_price = price
         if self.side == 'LONG':
             self.unrealized_pnl = (price - self.entry_price) * self.quantity
+            # Track highest price for trailing stop
+            if self.highest_price is None or price > self.highest_price:
+                self.highest_price = price
         else:
             self.unrealized_pnl = (self.entry_price - price) * self.quantity
+            # Track lowest price for trailing stop
+            if self.lowest_price is None or price < self.lowest_price:
+                self.lowest_price = price
         self.unrealized_pnl_pct = self.unrealized_pnl / self.size_usd
     
     def to_dict(self) -> Dict:
@@ -338,20 +349,59 @@ class PaperTradingEngine:
             callback('price_update', {'symbol': symbol, 'price': price})
     
     def _check_exit_conditions(self, symbol: str, price: float):
-        """Проверка условий выхода"""
+        """Проверка условий выхода с trailing stop и break-even"""
         if symbol not in self.positions:
             return
-        
+
         position = self.positions[symbol]
-        
+
+        # Calculate initial risk (1R)
+        if position.initial_stop_loss and position.entry_price:
+            risk_1r = abs(position.entry_price - position.initial_stop_loss)
+        else:
+            risk_1r = 0
+
         if position.side == 'LONG':
+            # Break-even: move SL to entry when price reaches +1R
+            if risk_1r > 0 and not position.break_even_triggered:
+                if price >= position.entry_price + risk_1r:
+                    position.stop_loss = position.entry_price
+                    position.break_even_triggered = True
+                    logger.info(f"{symbol}: Break-even triggered, SL moved to {position.stop_loss:.4f}")
+
+            # Trailing stop: after break-even, trail at 1.5R behind highest
+            if position.break_even_triggered and position.highest_price:
+                trailing_sl = position.highest_price - (risk_1r * 1.5)
+                if trailing_sl > position.stop_loss:
+                    position.stop_loss = trailing_sl
+                    logger.debug(f"{symbol}: Trailing SL updated to {position.stop_loss:.4f}")
+
+            # Check exit conditions
             if position.stop_loss and price <= position.stop_loss:
-                self.close_position(symbol, price, "STOP_LOSS")
+                reason = "TRAILING_STOP" if position.break_even_triggered else "STOP_LOSS"
+                self.close_position(symbol, price, reason)
             elif position.take_profit and price >= position.take_profit:
                 self.close_position(symbol, price, "TAKE_PROFIT")
         else:
+            # SHORT position
+            # Break-even: move SL to entry when price drops -1R
+            if risk_1r > 0 and not position.break_even_triggered:
+                if price <= position.entry_price - risk_1r:
+                    position.stop_loss = position.entry_price
+                    position.break_even_triggered = True
+                    logger.info(f"{symbol}: Break-even triggered, SL moved to {position.stop_loss:.4f}")
+
+            # Trailing stop: after break-even, trail at 1.5R above lowest
+            if position.break_even_triggered and position.lowest_price:
+                trailing_sl = position.lowest_price + (risk_1r * 1.5)
+                if trailing_sl < position.stop_loss:
+                    position.stop_loss = trailing_sl
+                    logger.debug(f"{symbol}: Trailing SL updated to {position.stop_loss:.4f}")
+
+            # Check exit conditions
             if position.stop_loss and price >= position.stop_loss:
-                self.close_position(symbol, price, "STOP_LOSS")
+                reason = "TRAILING_STOP" if position.break_even_triggered else "STOP_LOSS"
+                self.close_position(symbol, price, reason)
             elif position.take_profit and price <= position.take_profit:
                 self.close_position(symbol, price, "TAKE_PROFIT")
     
@@ -386,7 +436,7 @@ class PaperTradingEngine:
         fee = size_usd * self.fee_rate
         quantity = (size_usd - fee) / price
         
-        # Create position
+        # Create position with trailing stop support
         self.trade_counter += 1
         position = PaperPosition(
             id=self.trade_counter,
@@ -398,7 +448,11 @@ class PaperTradingEngine:
             size_usd=size_usd,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            current_price=price
+            current_price=price,
+            initial_stop_loss=stop_loss,  # Save for trailing stop calculation
+            highest_price=price if side == 'LONG' else None,
+            lowest_price=price if side == 'SHORT' else None,
+            break_even_triggered=False
         )
         
         self.positions[symbol] = position
