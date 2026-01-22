@@ -960,7 +960,7 @@ def trades_stats():
 # Cache for signals data
 _signals_cache = {}
 _signals_cache_time = 0
-SIGNALS_CACHE_TTL = 10  # seconds
+SIGNALS_CACHE_TTL = 3  # seconds - matches frontend update frequency
 
 
 @app.route('/api/signals/all')

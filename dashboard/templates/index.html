@@ -368,7 +368,13 @@
             loadStats();
             loadAllCoinData();
             updateLayerStats();
-            setInterval(loadAllCoinData, 5000);
+            // Update prices every 3 seconds
+            setInterval(loadAllCoinData, 3000);
+            // Update chart every 30 seconds
+            setInterval(() => loadChart('1h', 24), 30000);
+            // Update positions and status every 5 seconds
+            setInterval(loadPositions, 5000);
+            setInterval(loadStatus, 5000);
             setInterval(updateLayerStats, 10000);
         });
 
