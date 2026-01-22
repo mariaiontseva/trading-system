@@ -23,6 +23,19 @@ app.jinja_env.auto_reload = True
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
+# Trading symbols (15 coins)
+SYMBOLS = [
+    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT',  # Original 5
+    'XRPUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'MATICUSDT',  # New 5
+    'LINKUSDT', 'ATOMUSDT', 'LTCUSDT', 'UNIUSDT', 'NEARUSDT'   # New 5
+]
+
+# Strategy parameters (optimized)
+RSI_LONG = 42    # Was 40
+RSI_SHORT = 58   # Was 60
+ADX_MIN = 18     # Was 20
+EMA_PERIOD = 100
+
 # Lazy initialization of components to avoid async conflicts
 _paper_engine = None
 _data_manager = None
@@ -592,15 +605,15 @@ def calculate_live_signal(closes: list, highs: list, lows: list) -> tuple:
     signal = 0  # 0 = no signal, 1 = buy, -1 = sell
 
     # ADX filter: skip if no trend
-    if adx < 20:
+    if adx < ADX_MIN:
         return 0, atr, rsi
 
     # LONG: RSI < 40 AND price > EMA100 (oversold in uptrend)
-    if rsi < 40 and price > trend_ema:
+    if rsi < RSI_LONG and price > trend_ema:
         signal = 1
 
     # SHORT: RSI > 60 AND price < EMA100 (overbought in downtrend)
-    elif rsi > 60 and price < trend_ema:
+    elif rsi > RSI_SHORT and price < trend_ema:
         signal = -1
 
     return signal, atr, rsi
@@ -621,7 +634,7 @@ def auto_trading_loop():
     global _auto_trading_enabled
 
     logger.info("Auto trading loop started - PROVEN STRATEGY v2 (PF=1.33, WR=59%)")
-    symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT']
+    symbols = SYMBOLS
 
     # Strategy parameters (optimized with train/test split)
     STOP_ATR_MULT = 2.0      # was 3.0
@@ -866,7 +879,7 @@ def trades_stats():
 def signals_all():
     """Get signals and indicators for all symbols"""
     import numpy as np
-    symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT']
+    symbols = SYMBOLS
     result = {}
 
     try:
@@ -889,10 +902,10 @@ def signals_all():
 
                 # Calculate signal
                 signal = 0
-                if adx >= 20:
-                    if rsi < 40 and price > trend_ema:
+                if adx >= ADX_MIN:
+                    if rsi < RSI_LONG and price > trend_ema:
                         signal = 1  # LONG
-                    elif rsi > 60 and price < trend_ema:
+                    elif rsi > RSI_SHORT and price < trend_ema:
                         signal = -1  # SHORT
 
                 result[symbol] = {

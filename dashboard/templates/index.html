@@ -117,8 +117,8 @@
                         <div class="layer-content hidden px-3 pb-2 text-xs text-gray-400 border-t border-dark-600">
                             <div class="pt-2 space-y-1">
                                 <div class="flex justify-between"><span>Strategy:</span><span class="text-gray-300">RSI + Trend v2</span></div>
-                                <div class="flex justify-between"><span>LONG:</span><span class="text-accent-green">RSI&lt;40 + UP + ADX&gt;20</span></div>
-                                <div class="flex justify-between"><span>SHORT:</span><span class="text-accent-red">RSI&gt;60 + DOWN + ADX&gt;20</span></div>
+                                <div class="flex justify-between"><span>LONG:</span><span class="text-accent-green">RSI&lt;42 + UP + ADX&gt;18</span></div>
+                                <div class="flex justify-between"><span>SHORT:</span><span class="text-accent-red">RSI&gt;58 + DOWN + ADX&gt;18</span></div>
                                 <div class="flex justify-between"><span>Signals today:</span><span class="text-gray-300" id="signal-today">0</span></div>
                             </div>
                         </div>
@@ -208,7 +208,7 @@
                             <div class="flex items-center justify-between" id="long-cond-rsi">
                                 <span class="flex items-center gap-1.5">
                                     <span class="cond-icon">○</span>
-                                    <span>RSI &lt; 40</span>
+                                    <span>RSI &lt; 42</span>
                                 </span>
                                 <span class="font-mono text-gray-500 cond-value">--</span>
                             </div>
@@ -222,7 +222,7 @@
                             <div class="flex items-center justify-between" id="long-cond-adx">
                                 <span class="flex items-center gap-1.5">
                                     <span class="cond-icon">○</span>
-                                    <span>ADX &gt; 20</span>
+                                    <span>ADX &gt; 18</span>
                                 </span>
                                 <span class="font-mono text-gray-500 cond-value">--</span>
                             </div>
@@ -238,7 +238,7 @@
                             <div class="flex items-center justify-between" id="short-cond-rsi">
                                 <span class="flex items-center gap-1.5">
                                     <span class="cond-icon">○</span>
-                                    <span>RSI &gt; 60</span>
+                                    <span>RSI &gt; 58</span>
                                 </span>
                                 <span class="font-mono text-gray-500 cond-value">--</span>
                             </div>
@@ -252,7 +252,7 @@
                             <div class="flex items-center justify-between" id="short-cond-adx">
                                 <span class="flex items-center gap-1.5">
                                     <span class="cond-icon">○</span>
-                                    <span>ADX &gt; 20</span>
+                                    <span>ADX &gt; 18</span>
                                 </span>
                                 <span class="font-mono text-gray-500 cond-value">--</span>
                             </div>
@@ -332,17 +332,24 @@
     </main>
 
     <!-- Bottom Coin Tabs -->
-    <footer class="border-t border-dark-600 px-6 py-3 flex-shrink-0 bg-dark-800">
+    <footer class="border-t border-dark-600 px-4 py-2 flex-shrink-0 bg-dark-800">
         <div class="max-w-7xl mx-auto">
-            <div class="grid grid-cols-5 gap-3" id="coin-tabs">
+            <div class="flex gap-2 overflow-x-auto pb-1 scrollbar-thin" id="coin-tabs">
                 <!-- Coins will be rendered here -->
             </div>
         </div>
     </footer>
 
     <script>
-        const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT'];
-        const SYMBOL_NAMES = { BTCUSDT: 'Bitcoin', ETHUSDT: 'Ethereum', BNBUSDT: 'BNB', SOLUSDT: 'Solana', ADAUSDT: 'Cardano' };
+        const SYMBOLS = [
+            'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT',
+            'XRPUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'MATICUSDT',
+            'LINKUSDT', 'ATOMUSDT', 'LTCUSDT', 'UNIUSDT', 'NEARUSDT'
+        ];
+        // Strategy parameters (must match backend)
+        const RSI_LONG = 42;
+        const RSI_SHORT = 58;
+        const ADX_MIN = 18;
 
         let selectedSymbol = 'BTCUSDT';
         let isRunning = false;
@@ -369,24 +376,24 @@
         function renderCoinTabs() {
             const container = document.getElementById('coin-tabs');
             container.innerHTML = SYMBOLS.map(symbol => `
-                <div class="coin-tab glass rounded-lg p-3 ${symbol === selectedSymbol ? 'active' : ''}"
+                <div class="coin-tab glass rounded-lg p-2 min-w-[100px] flex-shrink-0 ${symbol === selectedSymbol ? 'active' : ''}"
                      onclick="selectCoin('${symbol}')" data-symbol="${symbol}">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="font-semibold">${symbol.replace('USDT', '')}</span>
-                        <span class="text-xs px-1.5 py-0.5 rounded signal-badge" data-symbol="${symbol}">--</span>
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="font-semibold text-sm">${symbol.replace('USDT', '')}</span>
+                        <span class="text-xs px-1 py-0.5 rounded signal-badge" data-symbol="${symbol}">--</span>
                     </div>
-                    <div class="font-mono text-lg font-semibold coin-price" data-symbol="${symbol}">$--</div>
-                    <div class="flex items-center justify-between mt-2 text-xs">
+                    <div class="font-mono text-sm font-semibold coin-price" data-symbol="${symbol}">$--</div>
+                    <div class="flex items-center justify-between mt-1 text-xs">
                         <span class="text-gray-500">RSI</span>
                         <span class="font-mono coin-rsi" data-symbol="${symbol}">--</span>
                     </div>
-                    <div class="mt-1.5 space-y-1 coin-conditions" data-symbol="${symbol}">
-                        <div class="flex gap-1 long-dots">
+                    <div class="mt-1 space-y-0.5 coin-conditions" data-symbol="${symbol}">
+                        <div class="flex gap-0.5 long-dots">
                             <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
                             <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
                             <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
                         </div>
-                        <div class="flex gap-1 short-dots">
+                        <div class="flex gap-0.5 short-dots">
                             <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
                             <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
                             <div class="w-1/3 h-1 rounded bg-dark-600 cond-dot"></div>
@@ -436,15 +443,15 @@
             const ema100 = data.ema100 || price;
 
             // LONG conditions
-            const longRsiOk = rsi < 40;
+            const longRsiOk = rsi < RSI_LONG;
             const longTrendOk = price > ema100;
-            const longAdxOk = adx >= 20;
+            const longAdxOk = adx >= ADX_MIN;
             const longCount = (longRsiOk ? 1 : 0) + (longTrendOk ? 1 : 0) + (longAdxOk ? 1 : 0);
 
             // SHORT conditions
-            const shortRsiOk = rsi > 60;
+            const shortRsiOk = rsi > RSI_SHORT;
             const shortTrendOk = price < ema100;
-            const shortAdxOk = adx >= 20;
+            const shortAdxOk = adx >= ADX_MIN;
             const shortCount = (shortRsiOk ? 1 : 0) + (shortTrendOk ? 1 : 0) + (shortAdxOk ? 1 : 0);
 
             // Helper to update condition row
@@ -465,7 +472,7 @@
             }
 
             // Update LONG conditions
-            updateCondition('long-cond-rsi', longRsiOk, rsi.toFixed(1) + (longRsiOk ? ' ✓' : ` (need -${(rsi-40).toFixed(0)})`));
+            updateCondition('long-cond-rsi', longRsiOk, rsi.toFixed(1) + (longRsiOk ? ' ✓' : ` (need -${(rsi-RSI_LONG).toFixed(0)})`));
             updateCondition('long-cond-trend', longTrendOk, longTrendOk ? 'UP ✓' : 'DOWN ✗');
             updateCondition('long-cond-adx', longAdxOk, adx.toFixed(1) + (longAdxOk ? ' ✓' : ' ✗'));
 
@@ -483,7 +490,7 @@
             }
 
             // Update SHORT conditions
-            updateCondition('short-cond-rsi', shortRsiOk, rsi.toFixed(1) + (shortRsiOk ? ' ✓' : ` (need +${(60-rsi).toFixed(0)})`), true);
+            updateCondition('short-cond-rsi', shortRsiOk, rsi.toFixed(1) + (shortRsiOk ? ' ✓' : ` (need +${(RSI_SHORT-rsi).toFixed(0)})`), true);
             updateCondition('short-cond-trend', shortTrendOk, shortTrendOk ? 'DOWN ✓' : 'UP ✗', true);
             updateCondition('short-cond-adx', shortAdxOk, adx.toFixed(1) + (shortAdxOk ? ' ✓' : ' ✗'), true);
 
@@ -539,8 +546,8 @@
                     if (rsiEl) rsiEl.textContent = rsi.toFixed(1);
 
                     // Calculate conditions
-                    const longConds = [rsi < 40, price > ema, adx >= 20];
-                    const shortConds = [rsi > 60, price < ema, adx >= 20];
+                    const longConds = [rsi < RSI_LONG, price > ema, adx >= ADX_MIN];
+                    const shortConds = [rsi > RSI_SHORT, price < ema, adx >= ADX_MIN];
                     const longCount = longConds.filter(c => c).length;
                     const shortCount = shortConds.filter(c => c).length;
 
