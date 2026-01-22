@@ -105,8 +105,24 @@ def paper_status():
 
 @app.route('/api/paper/positions')
 def paper_positions():
-    """Get open positions"""
-    return jsonify([p.to_dict() for p in get_paper_engine().positions.values()])
+    """Get open positions with real-time prices"""
+    engine = get_paper_engine()
+
+    # Update prices for all open positions
+    if engine.positions:
+        try:
+            loader = get_binance_loader()
+            for symbol, position in engine.positions.items():
+                try:
+                    ticker = loader.client.get_symbol_ticker(symbol=symbol)
+                    price = float(ticker['price'])
+                    position.update_price(price)
+                except:
+                    pass
+        except:
+            pass
+
+    return jsonify([p.to_dict() for p in engine.positions.values()])
 
 
 @app.route('/api/paper/trades')
