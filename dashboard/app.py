@@ -36,6 +36,9 @@ RSI_SHORT = 58   # Was 60
 ADX_MIN = 18     # Was 20
 EMA_PERIOD = 100
 
+# Timeframes
+TIMEFRAMES = ['15m', '1h']  # 15m for entries, 1h for confirmation
+
 # Lazy initialization of components to avoid async conflicts
 _paper_engine = None
 _data_manager = None
@@ -118,6 +121,44 @@ def paper_equity():
     """Get equity history"""
     days = request.args.get('days', 30, type=int)
     return jsonify(get_paper_engine().get_equity_history(days))
+
+
+@app.route('/api/paper/restore', methods=['POST'])
+def paper_restore():
+    """Restore historical trades (for recovery after deploy)"""
+    from core.paper_trading import PaperTrade
+    data = request.json
+    trades = data.get('trades', [])
+    engine = get_paper_engine()
+
+    restored = 0
+    for t in trades:
+        try:
+            trade = PaperTrade(
+                id=t['id'],
+                symbol=t['symbol'],
+                side=t['side'],
+                entry_time=datetime.fromisoformat(t['entry_time']),
+                exit_time=datetime.fromisoformat(t['exit_time']),
+                entry_price=t['entry_price'],
+                exit_price=t['exit_price'],
+                quantity=t['quantity'],
+                size_usd=t.get('size_usd', 200),
+                pnl=t['pnl'],
+                pnl_pct=t['pnl_pct'],
+                exit_reason=t['exit_reason'],
+                fees=t.get('fees', 0)
+            )
+            engine._save_trade(trade)
+            engine.trades.insert(0, trade)
+            engine.capital += trade.pnl
+            restored += 1
+        except Exception as e:
+            logger.error(f"Error restoring trade: {e}")
+
+    engine._save_state()
+    logger.info(f"Restored {restored} trades, capital: ${engine.capital:.2f}")
+    return jsonify({'restored': restored, 'capital': engine.capital})
 
 
 @app.route('/api/paper/open', methods=['POST'])
@@ -877,7 +918,7 @@ def trades_stats():
 
 @app.route('/api/signals/all')
 def signals_all():
-    """Get signals and indicators for all symbols"""
+    """Get signals and indicators for all symbols (multi-timeframe: 15m + 1h)"""
     import numpy as np
     symbols = SYMBOLS
     result = {}
@@ -887,36 +928,69 @@ def signals_all():
 
         for symbol in symbols:
             try:
-                klines = loader.client.get_klines(symbol=symbol, interval='1h', limit=120)
-                closes = np.array([float(k[4]) for k in klines])
-                highs = np.array([float(k[2]) for k in klines])
-                lows = np.array([float(k[3]) for k in klines])
+                # Get 1h data for trend confirmation
+                klines_1h = loader.client.get_klines(symbol=symbol, interval='1h', limit=120)
+                closes_1h = np.array([float(k[4]) for k in klines_1h])
+                highs_1h = np.array([float(k[2]) for k in klines_1h])
+                lows_1h = np.array([float(k[3]) for k in klines_1h])
 
-                rsi = calculate_rsi(closes, 14)
-                atr = calculate_atr(highs, lows, closes, 14)
-                adx = calculate_adx(highs, lows, closes, 14)
-                ema_100 = calculate_ema(closes, 100)
+                rsi_1h = calculate_rsi(closes_1h, 14)
+                adx_1h = calculate_adx(highs_1h, lows_1h, closes_1h, 14)
+                ema_100_1h = calculate_ema(closes_1h, 100)
 
-                price = closes[-1]
-                trend_ema = ema_100[-1]
+                # Get 15m data for entry signals (more frequent)
+                klines_15m = loader.client.get_klines(symbol=symbol, interval='15m', limit=120)
+                closes_15m = np.array([float(k[4]) for k in klines_15m])
+                highs_15m = np.array([float(k[2]) for k in klines_15m])
+                lows_15m = np.array([float(k[3]) for k in klines_15m])
 
-                # Calculate signal
+                rsi_15m = calculate_rsi(closes_15m, 14)
+                atr_15m = calculate_atr(highs_15m, lows_15m, closes_15m, 14)
+                adx_15m = calculate_adx(highs_15m, lows_15m, closes_15m, 14)
+
+                price = closes_15m[-1]
+                trend_ema = ema_100_1h[-1]
+
+                # Multi-timeframe signal:
+                # - 1h confirms trend direction (price vs EMA)
+                # - 15m triggers entry (RSI + ADX)
                 signal = 0
-                if adx >= ADX_MIN:
-                    if rsi < RSI_LONG and price > trend_ema:
-                        signal = 1  # LONG
-                    elif rsi > RSI_SHORT and price < trend_ema:
-                        signal = -1  # SHORT
+                signal_15m = 0
+                signal_1h = 0
+
+                # 1h trend direction
+                if price > trend_ema:
+                    signal_1h = 1  # Bullish trend
+                elif price < trend_ema:
+                    signal_1h = -1  # Bearish trend
+
+                # 15m entry signal
+                if adx_15m >= ADX_MIN:
+                    if rsi_15m < RSI_LONG:
+                        signal_15m = 1  # LONG signal
+                    elif rsi_15m > RSI_SHORT:
+                        signal_15m = -1  # SHORT signal
+
+                # Combined: only enter if 15m and 1h agree
+                if signal_15m == 1 and signal_1h == 1:
+                    signal = 1  # LONG confirmed
+                elif signal_15m == -1 and signal_1h == -1:
+                    signal = -1  # SHORT confirmed
 
                 result[symbol] = {
-                    'rsi': float(rsi),
-                    'adx': float(adx),
-                    'atr': float(atr),
+                    'rsi': float(rsi_15m),  # Show 15m RSI (more responsive)
+                    'rsi_1h': float(rsi_1h),
+                    'adx': float(adx_15m),
+                    'adx_1h': float(adx_1h),
+                    'atr': float(atr_15m),
                     'ema100': float(trend_ema),
                     'price': float(price),
-                    'signal': signal
+                    'signal': signal,
+                    'signal_15m': signal_15m,
+                    'signal_1h': signal_1h
                 }
             except Exception as e:
+                logger.error(f"Error getting signals for {symbol}: {e}")
                 result[symbol] = {'rsi': 50, 'adx': 0, 'atr': 0, 'signal': 0}
 
     except Exception as e:

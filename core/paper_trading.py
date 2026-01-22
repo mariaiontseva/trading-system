@@ -14,6 +14,14 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# PostgreSQL support
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    HAS_POSTGRES = True
+except ImportError:
+    HAS_POSTGRES = False
+
 from core.binance_client import BinanceDataLoader, BinanceWebSocket
 from bots.strategies import BaseStrategy, get_strategy
 
@@ -106,8 +114,9 @@ class PaperTrade:
 class PaperTradingEngine:
     """
     Paper Trading Engine для виртуальной торговли
+    Supports PostgreSQL (Railway) or SQLite (local)
     """
-    
+
     def __init__(
         self,
         initial_capital: float = 10000.0,
@@ -117,88 +126,152 @@ class PaperTradingEngine:
         self.initial_capital = initial_capital
         self.capital = initial_capital
         self.fee_rate = fee_rate
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # Check for PostgreSQL (Railway provides DATABASE_URL)
+        self.database_url = os.environ.get('DATABASE_URL')
+        self.use_postgres = bool(self.database_url and HAS_POSTGRES)
+
+        if not self.use_postgres:
+            self.db_path = Path(db_path)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
         self.positions: Dict[str, PaperPosition] = {}
         self.trades: List[PaperTrade] = []
         self.trade_counter = 0
-        
+
         self.strategies: Dict[str, BaseStrategy] = {}
         self.price_data: Dict[str, float] = {}
-        
+
         self.is_running = False
         self.callbacks: List[Callable] = []
-        
+
         self._init_database()
         self._load_state()
-        
-        logger.info(f"PaperTradingEngine initialized with ${initial_capital:,.2f}")
+
+        db_type = "PostgreSQL" if self.use_postgres else "SQLite"
+        logger.info(f"PaperTradingEngine initialized with ${initial_capital:,.2f} using {db_type}")
+
+    def _get_connection(self):
+        """Get database connection (PostgreSQL or SQLite)"""
+        if self.use_postgres:
+            return psycopg2.connect(self.database_url)
+        else:
+            return sqlite3.connect(self.db_path)
     
     def _init_database(self):
-        """Инициализация базы данных"""
-        conn = sqlite3.connect(self.db_path)
+        """Инициализация базы данных (PostgreSQL или SQLite)"""
+        conn = self._get_connection()
         cursor = conn.cursor()
-        
-        # State
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS state (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        ''')
-        
-        # Positions
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS positions (
-                id INTEGER PRIMARY KEY,
-                symbol TEXT,
-                side TEXT,
-                entry_time TEXT,
-                entry_price REAL,
-                quantity REAL,
-                size_usd REAL,
-                stop_loss REAL,
-                take_profit REAL
-            )
-        ''')
-        
-        # Trades
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trades (
-                id INTEGER PRIMARY KEY,
-                symbol TEXT,
-                side TEXT,
-                entry_time TEXT,
-                exit_time TEXT,
-                entry_price REAL,
-                exit_price REAL,
-                quantity REAL,
-                size_usd REAL,
-                pnl REAL,
-                pnl_pct REAL,
-                exit_reason TEXT,
-                fees REAL
-            )
-        ''')
+
+        if self.use_postgres:
+            # PostgreSQL syntax
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS positions (
+                    id INTEGER PRIMARY KEY,
+                    symbol TEXT,
+                    side TEXT,
+                    entry_time TEXT,
+                    entry_price REAL,
+                    quantity REAL,
+                    size_usd REAL,
+                    stop_loss REAL,
+                    take_profit REAL
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS trades (
+                    id SERIAL PRIMARY KEY,
+                    symbol TEXT,
+                    side TEXT,
+                    entry_time TEXT,
+                    exit_time TEXT,
+                    entry_price REAL,
+                    exit_price REAL,
+                    quantity REAL,
+                    size_usd REAL,
+                    pnl REAL,
+                    pnl_pct REAL,
+                    exit_reason TEXT,
+                    fees REAL
+                )
+            ''')
+        else:
+            # SQLite syntax
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS positions (
+                    id INTEGER PRIMARY KEY,
+                    symbol TEXT,
+                    side TEXT,
+                    entry_time TEXT,
+                    entry_price REAL,
+                    quantity REAL,
+                    size_usd REAL,
+                    stop_loss REAL,
+                    take_profit REAL
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS trades (
+                    id INTEGER PRIMARY KEY,
+                    symbol TEXT,
+                    side TEXT,
+                    entry_time TEXT,
+                    exit_time TEXT,
+                    entry_price REAL,
+                    exit_price REAL,
+                    quantity REAL,
+                    size_usd REAL,
+                    pnl REAL,
+                    pnl_pct REAL,
+                    exit_reason TEXT,
+                    fees REAL
+                )
+            ''')
         
         # Equity history
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS equity_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT,
-                equity REAL,
-                capital REAL,
-                unrealized_pnl REAL
-            )
-        ''')
-        
+        if self.use_postgres:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS equity_history (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TEXT,
+                    equity REAL,
+                    capital REAL,
+                    unrealized_pnl REAL
+                )
+            ''')
+        else:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS equity_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    equity REAL,
+                    capital REAL,
+                    unrealized_pnl REAL
+                )
+            ''')
+
         conn.commit()
         conn.close()
-    
+
     def _load_state(self):
         """Загрузка состояния из БД"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
         # Load capital
@@ -254,77 +327,123 @@ class PaperTradingEngine:
     
     def _save_state(self):
         """Сохранение состояния в БД"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
-        
-        # Save capital
-        cursor.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('capital', ?)", (str(self.capital),))
-        cursor.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('trade_counter', ?)", (str(self.trade_counter),))
-        
+
+        if self.use_postgres:
+            cursor.execute(
+                "INSERT INTO state (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = %s",
+                ('capital', str(self.capital), str(self.capital))
+            )
+            cursor.execute(
+                "INSERT INTO state (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = %s",
+                ('trade_counter', str(self.trade_counter), str(self.trade_counter))
+            )
+        else:
+            cursor.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('capital', ?)", (str(self.capital),))
+            cursor.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('trade_counter', ?)", (str(self.trade_counter),))
+
         conn.commit()
         conn.close()
-    
+
     def _save_position(self, position: PaperPosition):
         """Сохранение позиции"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO positions 
-            (id, symbol, side, entry_time, entry_price, quantity, size_usd, stop_loss, take_profit)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
+
+        params = (
             position.id, position.symbol, position.side,
             position.entry_time.isoformat(), position.entry_price,
             position.quantity, position.size_usd,
             position.stop_loss, position.take_profit
-        ))
-        
+        )
+
+        if self.use_postgres:
+            cursor.execute('''
+                INSERT INTO positions
+                (id, symbol, side, entry_time, entry_price, quantity, size_usd, stop_loss, take_profit)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    symbol = EXCLUDED.symbol,
+                    side = EXCLUDED.side,
+                    entry_time = EXCLUDED.entry_time,
+                    entry_price = EXCLUDED.entry_price,
+                    quantity = EXCLUDED.quantity,
+                    size_usd = EXCLUDED.size_usd,
+                    stop_loss = EXCLUDED.stop_loss,
+                    take_profit = EXCLUDED.take_profit
+            ''', params)
+        else:
+            cursor.execute('''
+                INSERT OR REPLACE INTO positions
+                (id, symbol, side, entry_time, entry_price, quantity, size_usd, stop_loss, take_profit)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', params)
+
         conn.commit()
         conn.close()
-    
+
     def _delete_position(self, symbol: str):
         """Удаление позиции"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM positions WHERE symbol = ?", (symbol,))
+        if self.use_postgres:
+            cursor.execute("DELETE FROM positions WHERE symbol = %s", (symbol,))
+        else:
+            cursor.execute("DELETE FROM positions WHERE symbol = ?", (symbol,))
         conn.commit()
         conn.close()
     
     def _save_trade(self, trade: PaperTrade):
         """Сохранение сделки"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO trades 
-            (id, symbol, side, entry_time, exit_time, entry_price, exit_price, 
-             quantity, size_usd, pnl, pnl_pct, exit_reason, fees)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
+
+        params = (
             trade.id, trade.symbol, trade.side,
             trade.entry_time.isoformat(), trade.exit_time.isoformat(),
             trade.entry_price, trade.exit_price,
             trade.quantity, trade.size_usd,
             trade.pnl, trade.pnl_pct, trade.exit_reason, trade.fees
-        ))
-        
+        )
+
+        if self.use_postgres:
+            cursor.execute('''
+                INSERT INTO trades
+                (id, symbol, side, entry_time, exit_time, entry_price, exit_price,
+                 quantity, size_usd, pnl, pnl_pct, exit_reason, fees)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', params)
+        else:
+            cursor.execute('''
+                INSERT INTO trades
+                (id, symbol, side, entry_time, exit_time, entry_price, exit_price,
+                 quantity, size_usd, pnl, pnl_pct, exit_reason, fees)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', params)
+
         conn.commit()
         conn.close()
-    
+
     def _save_equity(self):
         """Сохранение equity snapshot"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         unrealized = sum(p.unrealized_pnl for p in self.positions.values())
         equity = self.capital + unrealized
-        
-        cursor.execute('''
-            INSERT INTO equity_history (timestamp, equity, capital, unrealized_pnl)
-            VALUES (?, ?, ?, ?)
-        ''', (datetime.now().isoformat(), equity, self.capital, unrealized))
-        
+
+        if self.use_postgres:
+            cursor.execute('''
+                INSERT INTO equity_history (timestamp, equity, capital, unrealized_pnl)
+                VALUES (%s, %s, %s, %s)
+            ''', (datetime.now().isoformat(), equity, self.capital, unrealized))
+        else:
+            cursor.execute('''
+                INSERT INTO equity_history (timestamp, equity, capital, unrealized_pnl)
+                VALUES (?, ?, ?, ?)
+            ''', (datetime.now().isoformat(), equity, self.capital, unrealized))
+
         conn.commit()
         conn.close()
     
@@ -588,17 +707,25 @@ class PaperTradingEngine:
     
     def get_equity_history(self, days: int = 30) -> List[Dict]:
         """Получить историю equity"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         since = (datetime.now() - timedelta(days=days)).isoformat()
-        cursor.execute('''
-            SELECT timestamp, equity, capital, unrealized_pnl 
-            FROM equity_history 
-            WHERE timestamp > ?
-            ORDER BY timestamp
-        ''', (since,))
-        
+        if self.use_postgres:
+            cursor.execute('''
+                SELECT timestamp, equity, capital, unrealized_pnl
+                FROM equity_history
+                WHERE timestamp > %s
+                ORDER BY timestamp
+            ''', (since,))
+        else:
+            cursor.execute('''
+                SELECT timestamp, equity, capital, unrealized_pnl
+                FROM equity_history
+                WHERE timestamp > ?
+                ORDER BY timestamp
+            ''', (since,))
+
         history = [
             {
                 'timestamp': row[0],
@@ -608,7 +735,7 @@ class PaperTradingEngine:
             }
             for row in cursor.fetchall()
         ]
-        
+
         conn.close()
         return history
     
@@ -624,7 +751,7 @@ class PaperTradingEngine:
         self.trades = []
         
         # Clear database
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM positions")
         cursor.execute("DELETE FROM trades")
